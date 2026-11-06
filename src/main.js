@@ -43,6 +43,14 @@ const CONFIG = {
   // (±25° around each diagonal) — generous, but straight-ahead enemies
   // still take no damage, which IS the rule.
   diagonalConeWidthDeg: 50,
+  // AIM ASSIST (QA 2026-11-06, after the first real browser playtest):
+  // a target within aimAssistDeg of a cone EDGE still counts as a hit —
+  // the slash "snaps" to the nearest diagonal. Straight ahead stays a
+  // miss: |angle| must still be >= deadZoneMinDeg. Effective hit zone is
+  // therefore |angle| in [5°, 85°] instead of [20°, 70°]; the dead zone
+  // straight ahead shrinks from 40° to 10° but is NOT removed.
+  aimAssistDeg: 15,
+  deadZoneMinDeg: 5,
   parryWindow: 0.35,        // seconds after RMB press that a parry counts
   parryStun: 1.6,            // seconds the parried enemy is stunned
   parrySouls: 2,            // souls granted by a successful parry
@@ -52,8 +60,18 @@ const CONFIG = {
   healAmount: 50,
   healsPerWave: 2,
   // --- enemies: HP / damage / speed / attack range ---
+  // QA 2026-11-06 (Wave-1 tuning, after the playtest death at 00:16):
+  // pawn windup 0.6->0.9s and dmg 10->8, speed 2.4->2.0, and the global
+  // enemyAttackCooldown 2.2->2.8s below. Before: 2 pawns attacking on
+  // tokens dealt ~20 dmg per ~3.6s cycle, so a player who stood still
+  // (still learning the controls, and unable to attack because of the
+  // pointer-lock bug) died in ~16-18s. After: ~16 dmg per ~4.6s cycle,
+  // and the pawns take ~5s to reach the player, so a new player who
+  // moves, rolls or heals survives Wave 1 more often than not. Waves 2-3
+  // keep their original numbers — they are meant to be harder, and by
+  // then the player has the promotion buff and Souls.
   enemies: {
-    pawn:     { hp: 30,  dmg: 10, speed: 2.4, range: 1.9, windup: 0.6 },
+    pawn:     { hp: 30,  dmg: 8, speed: 2.0, range: 1.9, windup: 0.9 },
     knight:   { hp: 60,  dmg: 15, speed: 3.0, range: 6.0, windup: 0.8 },
     bishop:   { hp: 50,  dmg: 12, speed: 2.2, range: 9.0, windup: 0.9 },
     rook:     { hp: 80,  dmg: 18, speed: 2.6, range: 9.0, windup: 1.0 },
@@ -64,7 +82,7 @@ const CONFIG = {
   // may be in an attacking state at the same time. The rest must circle or
   // wait on cooldown — this is what makes 1-vs-many fair in real time.
   tokenCap: 2,
-  enemyAttackCooldown: 2.2, // seconds between an enemy's attack attempts
+  enemyAttackCooldown: 2.8, // seconds between an enemy's attack attempts (was 2.2 — see Wave-1 note above)
   // --- Soul-dash (replaces the old turn-based 1-use card) ---
   soulDashDistance: 5,
   soulDashDamage: 20,
@@ -92,11 +110,41 @@ const CONFIG = {
 // Tiny DOM helpers
 // ---------------------------------------------------------------------------
 const $ = (id) => document.getElementById(id);
+// Pointer-lock state (QA 2026-11-06 — see the input section for the full
+// story). Declared here because lockPointer() is defined up top.
+let pointerLocked = false;   // is the pointer currently locked to the canvas?
+let lockAcquiredAt = 0;      // performance.now() of the last lock acquisition
+let lockWasHeld = false;     // was a lock ever actually held this session?
+let lockUnavailable = false; // browser refused pointer lock -> drag-to-look
+let lockToastShown = false;  // only explain the fallback once per session
+const POINTER_LOCK_GRACE_MS = 600; // lock lost within this long of acquiring
+  // it is treated as a transient failure (bad click, automation, etc.),
+  // NOT as the user pressing Esc — so it must not open the pause screen.
 function lockPointer() {
+  // QA 2026-11-06: pointer lock used to be all-or-nothing — if the browser
+  // refused it, EVERY left click fell into "try to lock, don't attack" and
+  // the player could never attack with the mouse (this is what the first
+  // browser playtest hit). Now a refusal is detected and the game falls
+  // back to drag-to-look (see the input section): the game never dead-ends.
+  if (lockUnavailable) return false;
+  if (document.pointerLockElement === canvas) return true;
   try {
     const r = canvas.requestPointerLock();
-    if (r && r.catch) r.catch(() => { /* re-lock cooldown after Esc — harmless */ });
-  } catch (err) { /* pointer lock unavailable — game still plays with keys */ }
+    if (r && r.catch) r.catch((err) => {
+      // Chrome rejects a re-lock for ~1.25s after the user pressed Esc.
+      // That is TRANSIENT — do not mark the lock unavailable, just wait;
+      // the next click retries. Any other failure means this browser
+      // will not give us pointer lock at all -> drag-to-look fallback.
+      const msg = String((err && err.message) || '');
+      if (/exited the lock/i.test(msg)) return;
+      lockUnavailable = true;
+      if (!lockToastShown) {
+        lockToastShown = true;
+        showToast('Không khóa được chuột — kéo chuột để xoay camera, chuột trái vẫn chém được.');
+      }
+    });
+  } catch (err) { lockUnavailable = true; }
+  return false;
 }
 const hud = $('hud'), timerEl = $('timer'), waveEl = $('wave-label');
 const hpFill = $('hp-fill'), stFill = $('st-fill'), soulsEl = $('souls');
@@ -419,11 +467,16 @@ const coneHint = new THREE.Group();
 // Wedges centred on the two forward diagonals (local forward is -Z).
 // A local circle angle phi maps to world (cos phi, 0, -sin phi), so the
 // diagonals sit at phi = 45 deg and phi = 135 deg.
-for (const startDeg of [20, 110]) {
+// QA 2026-11-06: the wedges now show the EFFECTIVE hit zone — cone width
+// plus the aim assist (see CONFIG.aimAssistDeg) — so the gold flash on a
+// slash shows where a hit can actually land. The 10° dead zone straight
+// ahead (2 x deadZoneMinDeg) is the visible gap between the wedges.
+const coneHalfEffDeg = CONFIG.diagonalConeWidthDeg / 2 + CONFIG.aimAssistDeg;
+for (const startDeg of [45 - coneHalfEffDeg, 135 - coneHalfEffDeg]) {
   const cone = new THREE.Mesh(
     new THREE.CircleGeometry(CONFIG.attackRange, 20,
       THREE.MathUtils.degToRad(startDeg),
-      THREE.MathUtils.degToRad(CONFIG.diagonalConeWidthDeg)), coneHintMat);
+      THREE.MathUtils.degToRad(coneHalfEffDeg * 2)), coneHintMat);
   cone.rotation.x = -Math.PI / 2;
   cone.position.y = 0.06;
   coneHint.add(cone);
@@ -433,12 +486,34 @@ scene.add(coneHint);
 let coneHintTimer = 0;
 
 // ---------------------------------------------------------------------------
-// Input (pointer lock for mouse orbit; Esc releases the lock -> pause)
+// Input — pointer lock for mouse orbit, with a drag-to-look fallback.
+// ---------------------------------------------------------------------------
+// QA 2026-11-06 (the playtest bug): the old code paused the game on EVERY
+// pointerlockchange loss while playing, and a left click while unlocked
+// only ever tried to (re-)lock — it never attacked. So a player whose
+// browser refused pointer lock could never attack at all, and a click
+// that should have been an attack could land the player on the pause
+// screen instead. The rules now:
+//  * First click while unlocked LOCKS the pointer (no attack on that click).
+//  * Later LMB clicks attack (when locked, or when lock is unavailable).
+//  * Losing the lock pauses ONLY if the lock was genuinely held for a
+//    while (user pressed Esc / switched window). A lock lost within
+//    POINTER_LOCK_GRACE_MS of being acquired is transient — stay playing.
+//  * If pointer lock is unavailable/blocked, the game stays fully
+//    playable: plain mouse movement orbits the camera (drag-to-look) and
+//    LMB attacks directly. There is no dead state.
+//  * Esc pauses when NOT locked (in locked mode the browser eats Esc and
+//    the pointerlockchange handler below does the pausing).
 // ---------------------------------------------------------------------------
 const keys = {};
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Space') e.preventDefault();
   keys[e.code] = true;
+  if (e.code === 'Escape') {
+    if (STATE.phase === 'playing' && !pointerLocked) pauseGame();
+    else if (STATE.phase === 'paused') resumeGame();
+    return;
+  }
   if (STATE.phase === 'playing') {
     if (e.code === 'KeyH') tryHeal();
     if (e.code === 'KeyF') trySoulDash();
@@ -447,25 +522,65 @@ window.addEventListener('keydown', (e) => {
 });
 window.addEventListener('keyup', (e) => { keys[e.code] = false; });
 canvas.addEventListener('click', () => {
-  if (STATE.phase === 'playing' && document.pointerLockElement !== canvas) {
-    lockPointer();
-  }
+  // Backup re-lock attempt (mousedown below is the primary one). Lock-only:
+  // a click must never attack, or the lock-acquiring click becomes a slash.
+  if (STATE.phase === 'playing' && !pointerLocked && !lockUnavailable) lockPointer();
 });
 document.addEventListener('pointerlockchange', () => {
-  // Esc (or any lock loss) while playing = pause. The Start/Resume buttons
-  // re-acquire the lock on click.
-  if (document.pointerLockElement !== canvas && STATE.phase === 'playing') pauseGame();
+  if (document.pointerLockElement === canvas) {
+    pointerLocked = true;
+    lockAcquiredAt = performance.now();
+    lockWasHeld = true;
+    lockUnavailable = false;
+  } else {
+    pointerLocked = false;
+    // Pause only on a REAL lock loss (held for a while, then Esc / Alt-Tab).
+    if (STATE.phase === 'playing' && lockWasHeld &&
+        performance.now() - lockAcquiredAt > POINTER_LOCK_GRACE_MS) {
+      pauseGame();
+    }
+    // Otherwise: transient loss (never really acquired, or lost instantly)
+    // — stay in the game; the next click retries the lock, and if the
+    // browser keeps refusing, lockUnavailable flips on and drag-to-look
+    // takes over instead of pausing the player out of the fight.
+  }
+});
+document.addEventListener('pointerlockerror', () => {
+  // The browser refused pointer lock outright (permissions, automation,
+  // iframe rules...). Fall back to drag-to-look instead of a dead state.
+  lockUnavailable = true;
+  if (STATE.phase === 'playing' && !lockToastShown) {
+    lockToastShown = true;
+    showToast('Không khóa được chuột — kéo chuột để xoay camera, chuột trái vẫn chém được.');
+  }
 });
 document.addEventListener('mousemove', (e) => {
-  if (document.pointerLockElement !== canvas || STATE.phase !== 'playing') return;
-  camYaw -= e.movementX * 0.0028;
-  camPitch = THREE.MathUtils.clamp(camPitch + e.movementY * 0.0022, 0.08, 0.9);
+  if (STATE.phase !== 'playing') return;
+  if (pointerLocked || lockUnavailable) {
+    // Locked: classic pointer-lock orbit. Unlocked fallback: plain mouse
+    // movement orbits (movementX/Y exist on normal mousemove too). The
+    // HUD has pointer-events:none and there is no clickable UI while
+    // playing, so plain-move orbit cannot steal clicks from anything.
+    camYaw -= e.movementX * 0.0028;
+    camPitch = THREE.MathUtils.clamp(camPitch + e.movementY * 0.0022, 0.08, 0.9);
+  }
+  // Not locked yet and lock not known-unavailable: don't spin the camera
+  // on hover — wait for the first click to resolve the lock.
 });
 canvas.addEventListener('mousedown', (e) => {
   if (STATE.phase !== 'playing') return;
-  if (document.pointerLockElement !== canvas) { lockPointer(); return; }
-  if (e.button === 0) tryAttack();
-  if (e.button === 2) { player.parryTimer = CONFIG.parryWindow; player.blockHeld = true; }
+  if (e.button === 0) {
+    // Locked, or lock unavailable (drag-to-look mode): this click attacks.
+    // Unlocked and lock still possible: this click (re-)locks instead.
+    if (pointerLocked || lockUnavailable) tryAttack();
+    else lockPointer();
+    return;
+  }
+  if (e.button === 2) {
+    if (pointerLocked || lockUnavailable) {
+      player.parryTimer = CONFIG.parryWindow; player.blockHeld = true;
+    } else lockPointer();
+  }
 });
 window.addEventListener('mouseup', (e) => {
   if (e.button === 2) player.blockHeld = false;
@@ -565,6 +680,8 @@ function updateFloaters(dt) {
 // ---------------------------------------------------------------------------
 const enemies = [];
 let droppedSouls = null; // { pos, amount } — dropped where the player died
+// Shared hit-flash material (see updateEnemy — never allocate per frame).
+const flashMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x661111 });
 function spawnPosFor(index, total) {
   // Spread spawns along the far half of the board (z negative = enemy side).
   const x = (index - (total - 1) / 2) * 3.2;
@@ -657,6 +774,18 @@ function playerForward() {
 }
 function isInDiagonalCone(targetPos) {
   // Is the target inside one of the two forward-diagonal cones?
+  // QA 2026-11-06: the cone MATH was verified correct (cones at 20°-70°
+  // each side, 40° dead zone straight ahead, range 2.6 — a pawn standing
+  // diagonally in front at ~2 units DID take damage). The playtest misses
+  // were distance (enemies still >2.6 away) and the pointer-lock bug
+  // (clicks never reached tryAttack at all), not the cone math. The rule
+  // was still too punishing in practice, because enemies approach the
+  // player HEAD-ON (angle ~0°, dead centre of the dead zone) and a new
+  // player standing still could never land a hit. Fix, without touching
+  // the locked rule: an AIM ASSIST band of CONFIG.aimAssistDeg (15°)
+  // around each cone edge — a target just outside a cone edge still
+  // counts, as if the slash snapped to the nearest diagonal. Straight
+  // ahead stays a miss: |angle| < CONFIG.deadZoneMinDeg (5°) never hits.
   const to = targetPos.clone().sub(player.pos); to.y = 0;
   if (to.length() < 0.01) return false;
   const fwd = playerForward();
@@ -664,8 +793,12 @@ function isInDiagonalCone(targetPos) {
   // Normalise to [-PI, PI]
   const a = Math.atan2(Math.sin(ang), Math.cos(ang));
   const half = THREE.MathUtils.degToRad(CONFIG.diagonalConeWidthDeg / 2);
+  const assist = THREE.MathUtils.degToRad(CONFIG.aimAssistDeg);
+  const minDead = THREE.MathUtils.degToRad(CONFIG.deadZoneMinDeg);
   const diag = Math.PI / 4; // 45°
-  return Math.abs(Math.abs(a) - diag) <= half;
+  // +1e-9: float guard so a target exactly on the assist edge (85°) does
+  // not miss by one ULP of rounding.
+  return Math.abs(a) >= minDead && Math.abs(Math.abs(a) - diag) <= half + assist + 1e-9;
 }
 function tryAttack() {
   if (player.attackCd > 0 || player.rollTimer > 0 || player.vulnerableTimer > 0) return;
@@ -795,9 +928,10 @@ function updateEnemy(e, dt) {
   if (e.dead) return;
   e.cooldown -= dt;
   e.flashT = Math.max(0, e.flashT - dt);
-  e.group.children[0].material = e.flashT > 0
-    ? new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x661111 })
-    : blackMat;
+  // QA 2026-11-06: the old code allocated a NEW material every frame
+  // while flashing (a slow memory leak in long fights). One shared
+  // material now; assignment itself is cheap.
+  e.group.children[0].material = e.flashT > 0 ? flashMat : blackMat;
   const toPlayer = player.pos.clone().sub(e.group.position); toPlayer.y = 0;
   const dist = toPlayer.length();
   const dir = dist > 0.01 ? toPlayer.clone().normalize() : new THREE.Vector3(0, 0, 1);
@@ -930,9 +1064,19 @@ function executeAttack(e, dist, dir) {
   } else if (e.type === 'rook') {
     // Straight-line charge along the telegraphed line.
     const lineDir = e.targetPos;
+    const from = e.group.position.clone();
     e.group.position.addScaledVector(lineDir, 5);
     clampToBoard(e.group.position);
-    if (player.pos.distanceTo(e.group.position) < 1.8) damagePlayer(e.cfg.dmg, e.group.position);
+    // QA 2026-11-06: the old code only checked the END position, so the
+    // rook could charge straight through the player without hitting.
+    // Check the whole charge segment (same point-to-segment math as the
+    // Soul-dash) so standing on the telegraphed line actually hurts.
+    const seg = e.group.position.clone().sub(from);
+    const segLenSq = Math.max(seg.lengthSq(), 0.0001);
+    const t = THREE.MathUtils.clamp(
+      player.pos.clone().sub(from).dot(seg) / segLenSq, 0, 1);
+    const closest = from.clone().addScaledVector(seg, t);
+    if (player.pos.distanceTo(closest) < 1.8) damagePlayer(e.cfg.dmg, e.group.position);
     // Leave a fading line behind the charge.
     addTelegraph('line', e.group.position.clone(), { width: 1.4, length: 5, life: 0.4,
       angle: lineDir.x !== 0 ? Math.PI / 2 : 0, sound: false });
@@ -1105,7 +1249,7 @@ function fullRestart() {
 // ---------------------------------------------------------------------------
 const tutorialSteps = [
   { id: 'move', label: 'Di chuyển bằng W A S D' },
-  { id: 'attack', label: 'Chém bằng chuột trái — nhớ chém CHÉO, không chém thẳng' },
+  { id: 'attack', label: 'Chém bằng chuột trái — xoay camera để địch nằm trên ĐƯỜNG CHÉO, không chém thẳng' },
   { id: 'dodge', label: 'Né lăn bằng Space (bất tử thoáng chốc)' },
   { id: 'parry', label: 'Parry bằng chuột phải đúng lúc địch đánh tới' },
   { id: 'souldash', label: 'Giết địch để nhặt Soul, rồi nhấn F để Soul-dash' },
@@ -1113,7 +1257,7 @@ const tutorialSteps = [
 const tutorialDone = new Set();
 function renderTutorial() {
   tutorialEl.innerHTML = '<b>NHIỆM VỤ MỚI:</b><br>' +
-    tutorialSteps.map((s) => `<div class="${tutorialDone.has(s.id) ? 'done' : ''}">☐ ${s.label}</div>`).join('');
+    tutorialSteps.map((s) => `<div class="${tutorialDone.has(s.id) ? 'done' : ''}">${tutorialDone.has(s.id) ? '☑' : '☐'} ${s.label}</div>`).join('');
 }
 function tutorialMark(id) {
   if (tutorialDone.has(id)) return;
@@ -1179,9 +1323,10 @@ $('btn-execute').addEventListener('click', () => endGame(false));
 $('btn-again-win').addEventListener('click', fullRestart);
 $('btn-retry').addEventListener('click', retryWave);
 $('btn-again-lose').addEventListener('click', fullRestart);
-document.addEventListener('keydown', (e) => {
-  if (e.code === 'Escape' && STATE.phase === 'paused') resumeGame();
-});
+// NOTE (QA 2026-11-06): Esc is handled in the main keydown listener in
+// the input section (pause when playing-unlocked, resume when paused).
+// Do NOT add a second Escape listener here — two listeners on the same
+// event used to pause and then instantly resume in one keypress.
 renderTutorial();
 
 // ---------------------------------------------------------------------------
@@ -1256,7 +1401,12 @@ function animate() {
       const p = projectiles[i];
       p.life -= dt;
       p.mesh.position.addScaledVector(p.dir, p.speed * dt);
-      const hitR = p.isEnemy ? player.pos.distanceTo(p.mesh.position) < 0.9 : 0;
+      // QA 2026-11-06: the old check used 3D distanceTo with a 0.9 radius,
+      // but projectiles fly at y ≈ 1.1 while player.pos is at y = 0, so
+      // the 3D distance could never drop below 1.1 — Bishop projectiles
+      // could NEVER hit the player. Use horizontal (XZ) distance instead.
+      const dxz = Math.hypot(p.mesh.position.x - player.pos.x, p.mesh.position.z - player.pos.z);
+      const hitR = p.isEnemy ? dxz < 0.9 : 0;
       if (p.isEnemy && hitR) {
         damagePlayer(p.dmg, p.mesh.position);
         scene.remove(p.mesh); projectiles.splice(i, 1); continue;
