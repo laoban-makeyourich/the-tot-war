@@ -50,9 +50,12 @@ Push this folder to a repo and enable **Pages → Deploy from a branch →
   900 HP** (AoE ground circles, line attacks, sword rain from above
   below 50% HP).
 - **Diagonal-only attack (core identity).** The sword hits inside two
-  50°-wide cones centred on the forward diagonals. Enemies straight
-  ahead take **no damage** — a faint gold cone flashes on every slash
-  so the rule can be learned, and the tutorial says it outright.
+  50°-wide cones centred on the forward diagonals, **plus a ±15° aim
+  assist** around each cone edge (added 2026-11-06, see QA below).
+  Enemies straight ahead take **no damage** — a faint gold cone flashes
+  on every slash so the rule can be learned, and the tutorial says it
+  outright. Tip the game itself teaches: rotate the camera so the
+  enemy sits on a diagonal — the slash follows where the camera looks.
   - *Honest note on the brief:* the brief says "±50° around each
     diagonal". Taken literally that would cover straight ahead (45°
     away from a diagonal) and delete the rule entirely, so the demo
@@ -175,3 +178,40 @@ play Wave 1: confirm the pawn moves, the slash hits diagonally but
 misses straight ahead, the roll has i-frames, and the Queen fight is
 beatable in a few minutes. If anything feels off, the first knobs to
 turn are all in `CONFIG` at the top of `src/main.js`.
+
+## QA 2026-11-06 — đợt sửa sau playtest thật trên trình duyệt
+
+Playtest đầu tiên (GitHub Pages build, browser test) thấy: game tải
+được, Wave 1 có 3 tốt đen, W di chuyển được — nhưng tốt trắng **chết
+ở 00:16**, một cú click chuột trái **mở màn hình TẠM DỪNG thay vì
+chém**, và không quan sát được cú chém nào trúng địch. Audit lại toàn
+bộ `src/main.js` (1304 dòng) sau đó, và sửa như sau:
+
+| # | Vấn đề tìm thấy | Nguyên nhân | Đã sửa |
+|---|---|---|---|
+| 1 | **Click chuột trái không bao giờ chém được nếu trình duyệt từ chối pointer lock** — mọi click đều rơi vào nhánh "thử lock lại rồi return". Đây là lỗi nghiêm trọng nhất, giải thích vì sao playtest không chém trúng ai. | `mousedown` khi chưa lock thì chỉ gọi `lockPointer()` và return, không có đường fallback. | Viết lại vòng đời pointer lock (`src/main.js`, section Input): click đầu tiên lock chuột (không chém); các click sau chém khi đã lock **hoặc khi lock không dùng được**; khi lock bị từ chối (`pointerlockerror` / promise reject không phải do Esc-cooldown) thì bật chế độ **drag-to-look** — di chuột thường cũng xoay camera, chuột trái chém thẳng. Game không còn trạng thái chết. |
+| 2 | **Click chém có thể mở màn hình TẠM DỪNG.** | `pointerlockchange` pause game với *bất kỳ* lần mất lock nào khi đang chơi, kể cả lock chưa từng giữ được / mất ngay sau khi lấy. | Chỉ pause khi lock đã giữ thật > 600 ms (`POINTER_LOCK_GRACE_MS`) rồi mới mất (Esc / chuyển cửa sổ). Mất lock thoáng qua thì ở lại trong game. Esc cũng được xử lý rõ: khi không lock thì Esc = pause, khi pause thì Esc = resume (gộp vào 1 listener duy nhất — trước đây có 2 listener Esc, có thể pause rồi resume ngay trong cùng một phím). |
+| 3 | **Chém chéo đúng toán học nhưng quá khó với người mới.** | `isInDiagonalCone` đã đúng (cone 20°–70° mỗi bên, dead zone 40°, range 2.6 — đã kiểm chứng bằng script Node với 13 góc mẫu, đều đúng). Nhưng địch tiếp cận **thẳng đầu** (góc ≈0°, đúng giữa dead zone) nên người đứng yên chém thì 100% hụt; các cú hụt trong playtest còn do địch ở xa >2.6 và do lỗi #1. | **Không** nới cone (luật đã chốt). Thêm **aim assist** theo đúng task: `CONFIG.aimAssistDeg = 15`, `CONFIG.deadZoneMinDeg = 5` — địch trong 15° quanh mép cone vẫn trúng (như chém "snap" về đường chéo gần nhất); thẳng trước mặt <5° vẫn **0 damage**. Vùng trúng hiệu dụng thành [5°, 85°], dead zone còn 10°. Wedge vàng hiển thị cũng vẽ theo vùng hiệu dụng này. Tutorial sửa thành "xoay camera để địch nằm trên ĐƯỜNG CHÉO". |
+| 4 | **Wave 1 quá khó: chết ở ~16 giây.** | Tính lại: 2 token × chu kỳ ~3.65s × 10 dmg ≈ 20 dmg/3.6s → 100 HP hết trong ~18s nếu đứng yên (đúng như playtest 00:16), cộng với việc không chém được (lỗi #1, #3). | Chỉ đổi số trong CONFIG: tốt đen windup 0.6→**0.9s**, dmg 10→**8**, tốc độ 2.4→**2.0**; `enemyAttackCooldown` toàn cục 2.2→**2.8s**. Người chơi thụ động giờ sống ~28s; người biết di chuyển/né/hồi máu (và chém được, 1 hit giết 1 tốt vì 30 dmg = 30 HP) qua Wave 1 dễ hơn hẳn. Wave 2–3 giữ nguyên số cũ. |
+| 5 | **Đạn của Tượng không bao giờ trúng** (lỗi mới, audit tìm ra). | Đạn bay ở y≈1.1, check trúng dùng khoảng cách 3D `distanceTo(player.pos)` ngưỡng 0.9 — khoảng cách tối thiểu luôn ≥1.1. | Check trúng dùng khoảng cách ngang XZ (`Math.hypot(dx, dz) < 0.9`). |
+| 6 | **Xe charge xuyên qua người không gây sát thương** (lỗi mới). | `executeAttack` của Xe chỉ check trúng tại điểm cuối sau khi lao 5 đơn vị. | Check cả đoạn đường charge (point-to-segment, cùng cách tính như Soul-dash). |
+| 7 | Rò rỉ material nhỏ: `updateEnemy` tạo `new MeshStandardMaterial` **mỗi frame** khi địch nhấp nháy trúng đòn. | — | Dùng 1 `flashMat` dùng chung. |
+| 8 | Tutorial checklist luôn hiện ☐ kể cả khi đã xong. | `renderTutorial` hard-code ☐. | Hiện ☑ khi đã hoàn thành. |
+
+Đã kiểm chứng lại sau khi sửa:
+
+- `node --check src/main.js` — OK.
+- Server local: `curl` trả **200** cho `/` và `/src/main.js` (66.008 byte); Three.js CDN trả 200.
+- Script Node mô phỏng `isInDiagonalCone`: 13/13 góc mẫu đúng (0° hụt, 3° hụt, 5° trúng nhờ assist, 45° trúng, 85° trúng nhờ assist, 90° hụt, 180° hụt; có sửa 1 lỗi làm tròn float ở đúng biên 85° bằng epsilon 1e-9).
+- 5 fix của bản build trước đã kiểm tra lại và **còn nguyên**: cờ `waveCleared`, melee của Hậu, hướng xoay cone-hint, point-to-segment của Soul-dash, không còn hàm pointer-lock tự gọi chính nó.
+- Tất cả id DOM mà JS dùng đều có trong `index.html`; chỉ còn đúng 1 listener `keydown`.
+
+**Vẫn CHƯA kiểm chứng được trong trình duyệt thật** (môi trường này
+không mở được localhost trong trình duyệt, và GitHub Pages thì do
+parent push sau): chưa có lần chơi end-to-end nào *sau* đợt sửa này
+xác nhận click chuột trái chém trúng địch, parry, Soul-dash, ô phong
+vương, trận Hậu và màn hình chọn bắt sống. Những điểm đó vẫn cần
+người chơi thật (hoặc Codex) mở
+https://laoban-makeyourich.github.io/the-tot-war/ sau khi push và
+chơi thử Wave 1: chém chéo trúng, chém thẳng hụt, né lăn, và xem có
+còn bị văng ra màn hình TẠM DỪNG khi click chuột nữa không.
