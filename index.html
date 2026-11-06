@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>The Tot War — Playable Demo</title>
+<title>The Tot War — Playable Demo (theo lượt)</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   html, body { width:100%; height:100%; overflow:hidden; background:#0d0505;
@@ -23,6 +23,8 @@
     letter-spacing:1px; }
   .btn:hover { background:#f5d98f; }
   .btn.ghost { background:transparent; color:#e8c97a; border:2px solid #e8c97a; }
+  .btn.small { padding:8px 18px; font-size:15px; margin-top:8px; }
+  .btn:disabled { opacity:.45; cursor:not-allowed; }
   .btnrow { display:flex; gap:16px; flex-wrap:wrap; justify-content:center; }
   table.controls { margin:16px auto; border-collapse:collapse; font-size:15px; text-align:left; }
   table.controls td { padding:5px 14px; border-bottom:1px solid rgba(232,201,122,.25); }
@@ -30,38 +32,42 @@
   .note { font-size:13px; color:#a89878; max-width:560px; }
   /* HUD */
   #hud { position:absolute; inset:0; pointer-events:none; z-index:10; }
-  #timer { position:absolute; top:12px; left:50%; transform:translateX(-50%);
-    font-size:26px; font-weight:700; color:#f3e9d8; text-shadow:0 2px 8px #000; letter-spacing:2px; }
-  #wave-label { position:absolute; top:46px; left:50%; transform:translateX(-50%);
-    font-size:14px; letter-spacing:3px; color:#e8c97a; text-shadow:0 2px 6px #000; }
-  #bars { position:absolute; left:18px; bottom:16px; width:280px; }
-  .bar-row { display:flex; align-items:center; gap:8px; margin-top:6px; }
-  .bar-label { width:64px; font-size:12px; letter-spacing:1px; color:#d8cbb2; text-align:right; }
-  .bar { flex:1; height:14px; background:rgba(0,0,0,.6); border:1px solid rgba(232,201,122,.5); border-radius:7px; overflow:hidden; }
-  .bar > div { height:100%; transition:width .15s; }
-  #hp-fill { background:#c0392b; width:100%; }
-  #st-fill { background:#27ae60; width:100%; }
+  #hud button { pointer-events:auto; }
+  #wave-label { position:absolute; top:12px; left:50%; transform:translateX(-50%);
+    font-size:18px; letter-spacing:3px; color:#e8c97a; text-shadow:0 2px 6px #000; }
+  #turn-queue { position:absolute; top:40px; left:50%; transform:translateX(-50%);
+    font-size:14px; color:#f3e9d8; text-shadow:0 2px 6px #000;
+    background:rgba(0,0,0,.5); padding:5px 14px; border-radius:16px;
+    border:1px solid rgba(232,201,122,.4); max-width:92vw; text-align:center; }
+  #status { position:absolute; left:18px; top:16px; max-width:320px; font-size:15px;
+    background:rgba(0,0,0,.55); border:1px solid rgba(232,201,122,.4); border-radius:8px;
+    padding:10px 14px; line-height:1.8; text-shadow:0 2px 4px #000; }
+  #status b { color:#e8c97a; }
+  #actions { font-size:17px; font-weight:700; }
+  #cards { position:absolute; left:18px; bottom:16px; max-width:46vw; display:flex;
+    gap:8px; flex-wrap:wrap; align-items:center; }
+  .card-btn { pointer-events:auto; padding:10px 14px; font-size:15px; font-weight:700;
+    color:#f3e9d8; background:#3a2a6a; border:2px solid #9b8cff; border-radius:8px; cursor:pointer; }
+  .card-btn:hover { background:#4d3a86; }
+  #end-turn-wrap { position:absolute; right:18px; bottom:16px; text-align:right; }
+  #btn-end-turn { pointer-events:auto; padding:14px 28px; font-size:17px; font-weight:700;
+    color:#1a0808; background:#e8c97a; border:none; border-radius:8px; cursor:pointer; }
+  #btn-end-turn:hover { background:#f5d98f; }
   #boss-wrap { position:absolute; left:50%; transform:translateX(-50%); bottom:18px; width:min(560px,70vw); }
   #boss-name { text-align:center; font-size:14px; letter-spacing:4px; color:#e8c97a; text-shadow:0 2px 6px #000; margin-bottom:4px; }
   #boss-bar { height:16px; background:rgba(0,0,0,.65); border:1px solid #c0392b; border-radius:8px; overflow:hidden; }
   #boss-fill { height:100%; background:linear-gradient(90deg,#8e1a1a,#e74c3c); width:100%; }
-  #stats { position:absolute; right:18px; bottom:16px; text-align:right; font-size:15px;
-    text-shadow:0 2px 6px #000; line-height:1.7; }
-  #stats b { color:#e8c97a; }
-  #soul-slot { color:#9b8cff; }
-  #tutorial { position:absolute; left:18px; top:16px; max-width:300px; font-size:14px;
-    background:rgba(0,0,0,.55); border:1px solid rgba(232,201,122,.4); border-radius:8px;
-    padding:10px 14px; line-height:1.6; }
-  #tutorial .done { color:#27ae60; text-decoration:line-through; opacity:.7; }
   #banner { position:absolute; top:34%; left:50%; transform:translate(-50%,-50%);
-    font-size:44px; font-weight:800; letter-spacing:6px; color:#e8c97a;
+    font-size:40px; font-weight:800; letter-spacing:5px; color:#e8c97a; text-align:center;
     text-shadow:0 0 30px rgba(232,180,60,.7), 0 2px 8px #000; opacity:0; transition:opacity .4s; }
-  #crosshair { position:absolute; top:50%; left:50%; width:6px; height:6px; margin:-3px;
-    background:rgba(243,233,216,.9); border-radius:50%; box-shadow:0 0 6px #000; }
   #damage-vignette { position:absolute; inset:0; pointer-events:none; z-index:9;
     box-shadow:inset 0 0 120px 40px rgba(192,57,43,.0); transition:box-shadow .2s; }
-  #toast { position:absolute; bottom:110px; left:50%; transform:translateX(-50%);
-    font-size:16px; color:#f5d98f; text-shadow:0 2px 6px #000; }
+  #toast { position:absolute; bottom:110px; left:50%; transform:translateX(-50%); max-width:90vw;
+    text-align:center; font-size:16px; color:#f5d98f; text-shadow:0 2px 6px #000; }
+  .shop-item { background:rgba(0,0,0,.5); border:1px solid rgba(232,201,122,.4); border-radius:8px;
+    padding:12px 18px; margin:8px 0; width:min(520px,90vw); text-align:left; line-height:1.5; }
+  .shop-item span { color:#a89878; font-size:14px; }
+  .shop-item .btn { float:right; margin-top:0; }
 </style>
 <script type="importmap">
 { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
@@ -72,22 +78,21 @@
 <div id="damage-vignette"></div>
 
 <div id="hud" class="hidden">
-  <div id="timer">00:00</div>
   <div id="wave-label">WAVE 1</div>
-  <div id="crosshair"></div>
-  <div id="tutorial"></div>
-  <div id="bars">
-    <div class="bar-row"><span class="bar-label">MÁU</span><div class="bar"><div id="hp-fill"></div></div></div>
-    <div class="bar-row"><span class="bar-label">STAMINA</span><div class="bar"><div id="st-fill"></div></div></div>
+  <div id="turn-queue"></div>
+  <div id="status">
+    <div id="hp">Máu: 1/1</div>
+    <div id="actions">Hành động còn lại: ●● (2/2)</div>
+    <div id="gold">Vàng: 0</div>
+    <div id="warnings">Cảnh báo còn lại: 3/3</div>
   </div>
   <div id="boss-wrap" class="hidden">
     <div id="boss-name">THE QUEEN</div>
     <div id="boss-bar"><div id="boss-fill"></div></div>
   </div>
-  <div id="stats">
-    <div>Souls: <b id="souls">0</b></div>
-    <div>Hồi máu (H): <b id="heals">2</b></div>
-    <div id="soul-slot">Soul-dash (F): —</div>
+  <div id="cards"></div>
+  <div id="end-turn-wrap">
+    <button id="btn-end-turn">KẾT THÚC LƯỢT (Space)</button>
   </div>
   <div id="banner"></div>
   <div id="toast"></div>
@@ -95,33 +100,54 @@
 
 <!-- TITLE -->
 <div id="screen-title" class="overlay">
-  <h1>THE TOT WAR<small>DARK SOULS &bull; NHƯNG BẠN LÀ MỘT QUÂN TỐT</small></h1>
-  <p>Một quân tốt trắng phản loạn, một mình chống lại cả bàn cờ. Chém <b>chéo</b> mới trúng —
-     địch đứng thẳng trước mặt sẽ không bị thương. Né, đỡ, parry, nhặt Soul của kẻ vừa giết,
-     phong vương ở cuối bàn cờ — rồi đối mặt Hậu 900 máu.</p>
+  <h1>THE TOT WAR<small>CHIẾN THUẬT THEO LƯỢT &bull; TRÊN BÀN CỜ</small></h1>
+  <p>Một quân tốt trắng phản loạn, một mình chống lại cả bàn cờ. Mỗi lượt bạn có
+     <b>2 hành động</b> — đi thẳng 1 ô, chém <b>chéo</b> 1 ô — rồi tới lượt từng quân địch,
+     xen kẽ nhau. Giết địch để nhận thẻ bài của chúng, tấn công ô vàng 3 lần để phong vương,
+     rồi đối mặt Hậu ở chương cuối.</p>
   <table class="controls">
-    <tr><td>W A S D</td><td>Di chuyển (theo hướng camera)</td></tr>
-    <tr><td>Chuột</td><td>Xoay camera (bấm vào game để khóa chuột)</td></tr>
-    <tr><td>Chuột trái</td><td>Chém kiếm — chỉ trúng theo 2 đường chéo trước mặt</td></tr>
-    <tr><td>Chuột phải</td><td>Khiên / Parry đúng lúc: choáng địch + nhận Souls</td></tr>
-    <tr><td>Space</td><td>Né lăn (có i-frame — bất tử thoáng chốc)</td></tr>
-    <tr><td>Shift</td><td>Chạy nhanh (tốn stamina)</td></tr>
-    <tr><td>H</td><td>Hồi máu (2 lần mỗi wave)</td></tr>
-    <tr><td>F</td><td>Soul-dash: dash theo nước đi của quân vừa giết</td></tr>
+    <tr><td>Click ô xanh</td><td>Di chuyển 1 ô (tốn 1 hành động)</td></tr>
+    <tr><td>Click ô đỏ</td><td>Tấn công địch ở ô đó — tốt chỉ chém CHÉO, không chém thẳng</td></tr>
+    <tr><td>W A S D / mũi tên</td><td>Bước 1 ô theo hướng đó</td></tr>
+    <tr><td>Click thẻ bài</td><td>Dùng thẻ: lượt này di chuyển như quân trên thẻ (thẻ biến mất ngay)</td></tr>
+    <tr><td>Space / nút KẾT THÚC LƯỢT</td><td>Hết lượt của bạn, tới lượt địch</td></tr>
+    <tr><td>H</td><td>Hồi máu (1 lần mỗi wave)</td></tr>
     <tr><td>Esc</td><td>Tạm dừng</td></tr>
   </table>
   <button class="btn" id="btn-start">BẮT ĐẦU</button>
-  <p class="note">Demo vertical slice: 3 wave + boss Hậu. Chưa có: boss Vua cuối, shop, chương 1–4 đầy đủ,
-     địa hình cổng/sông. Đồ họa quân cờ dựng bằng code (procedural), không dùng model ngoài.
-     Nếu trình duyệt không cho khóa chuột, cứ kéo chuột để xoay camera — chuột trái vẫn chém được.</p>
+  <p class="note">Demo theo lượt: Wave 1 (2 tốt + 1 mã), Wave 2, Wave 3, rồi boss Hậu.
+     Tốt chỉ có 1 máu — một đòn là chết, nhưng shop giữa các wave bán Giáp (+1 máu)
+     và Hồi sinh. Máu Hậu trong demo là 20 (đã scale từ 900 của video cho đòn 1 dame);
+     xem README.md để biết chi tiết. Đồ họa quân cờ dựng bằng code (procedural).</p>
 </div>
 
 <!-- PAUSE -->
 <div id="screen-pause" class="overlay hidden">
   <h2>TẠM DỪNG</h2>
-  <p>Nhấn Esc hoặc nút dưới để tiếp tục. Chuột đã được thả ra.</p>
+  <p>Nhấn Esc hoặc nút dưới để tiếp tục.</p>
   <button class="btn" id="btn-resume">TIẾP TỤC</button>
   <button class="btn ghost" id="btn-restart-pause">CHƠI LẠI TỪ ĐẦU</button>
+</div>
+
+<!-- SHOP -->
+<div id="screen-shop" class="overlay hidden">
+  <h2>SHOP — GIỮA WAVE</h2>
+  <p>Bạn có <b id="shop-gold">0</b> vàng. Mua đồ rồi sang wave tiếp theo.</p>
+  <div id="shop-items"></div>
+  <button class="btn" id="btn-next-wave">SANG WAVE TIẾP THEO →</button>
+</div>
+
+<!-- PROMOTION CHOICE -->
+<div id="screen-promote" class="overlay hidden">
+  <h2>PHONG VƯƠNG!</h2>
+  <p>Bạn đã bước vào ô phong vương đã mở khóa. Chọn hóa thân thành quân nào?
+     Dạng mới giữ <b>trong wave này</b>, với đầy đủ cách di chuyển của quân đó.</p>
+  <div class="btnrow">
+    <button class="btn" id="btn-promote-knight">MÃ — nhảy chữ L</button>
+    <button class="btn" id="btn-promote-bishop">TƯỢNG — đi chéo</button>
+    <button class="btn" id="btn-promote-rook">XE — đi thẳng</button>
+    <button class="btn" id="btn-promote-queen">HẬU — đi mọi hướng</button>
+  </div>
 </div>
 
 <!-- QUEEN CHOICE -->
@@ -147,8 +173,8 @@
 <!-- LOSE -->
 <div id="screen-lose" class="overlay hidden">
   <h2>NGÃ XUỐNG</h2>
-  <p>Quân tốt đã ngã trên bàn cờ… nhưng phản loạn chưa kết thúc. Souls của bạn rơi lại nơi bạn ngã —
-     hãy quay lại nhặt chúng.</p>
+  <p>Quân tốt đã ngã trên bàn cờ… nhưng phản loạn chưa kết thúc. Hãy thử lại wave này —
+     lần này nhớ xem ô nào đang bị địch ngắm trước khi bước vào.</p>
   <button class="btn" id="btn-retry">THỬ LẠI WAVE NÀY</button>
   <button class="btn ghost" id="btn-again-lose">CHƠI LẠI TỪ ĐẦU</button>
 </div>
