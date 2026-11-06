@@ -396,7 +396,7 @@ function makeFloatingText(text, color = '#ffd34d') {
   ctx.strokeText(text, 64, 44); ctx.fillText(text, 64, 44);
   const tex = new THREE.CanvasTexture(c);
   const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
-  sp.scale.set(1.6, 0.8, 1);
+  sp.scale.set(2.4, 1.2, 1);
   return sp;
 }
 const floaters = [];
@@ -404,7 +404,7 @@ function spawnFloater(text, pos, color) {
   const sp = makeFloatingText(text, color);
   sp.position.copy(pos).add(new THREE.Vector3(0, 1.6, 0));
   scene.add(sp);
-  floaters.push({ sp, life: 0.9 });
+  floaters.push({ sp, life: 1.6 }); // QA 2026-11-06: was 0.9s — damage numbers vanished before a screenshot (or a player) could read them.
 }
 
 // ---------------------------------------------------------------------------
@@ -670,7 +670,7 @@ function updateFloaters(dt) {
     const f = floaters[i];
     f.life -= dt;
     f.sp.position.y += dt * 1.2;
-    f.sp.material.opacity = Math.max(0, f.life / 0.9);
+    f.sp.material.opacity = Math.max(0, f.life / 1.6);
     if (f.life <= 0) { scene.remove(f.sp); floaters.splice(i, 1); }
   }
 }
