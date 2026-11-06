@@ -1,9 +1,15 @@
 // ============================================================================
-// THE TOT WAR — playable 3D web demo (vertical slice)
-// Real-time third-person Dark Souls-like on an 8x8 chessboard.
-// Reference: Pawned Souls. All graphics are procedural (Three.js lathe/box
-// geometry) — no external models or images, so the demo runs from any static
-// server. Single file on purpose: the user will hand this to Codex next.
+// THE TOT WAR — playable demo, TURN-BASED grid tactics (2026-11-06 rebuild)
+// The original design was turn-based: every piece occupies exactly one
+// square of an 8x8 board and moves square-to-square. The real-time build
+// that lived here before was the WRONG direction (it was made from the
+// TikTok video) and has been replaced by this file, per the owner's
+// decision: "game ban đầu là theo lượt" + "di chuyển trên các ô bàn cờ".
+// Keep: Three.js setup, dark-red 8x8 board, procedural chess pieces
+// (LatheGeometry), Queen 900 HP capture-alive choice, dark tone.
+// Change: gameplay is turn-based, camera is a fixed angled top-down view
+// of the whole board (no third-person, no pointer lock, no WASD free roam).
+// Single file on purpose: the owner will hand this to Codex next.
 // ============================================================================
 import * as THREE from 'three';
 
@@ -13,96 +19,46 @@ import * as THREE from 'three';
 // without touching the rules.
 // ---------------------------------------------------------------------------
 const CONFIG = {
-  // --- board ---
-  boardTiles: 8,            // 8x8
+  boardTiles: 8,
   tileSize: 2,              // world units per tile
-  // --- player ---
-  playerMaxHp: 100,
-  playerDamage: 30,         // ~30 clean hits to kill the 900-HP Queen
-  playerDamageBuff: 1.5,    // promotion ("phong vương") multiplies damage
-  playerSpeed: 6,
-  playerSprintSpeed: 9,
-  playerRadius: 0.55,
-  // stamina (max 100)
-  staminaMax: 100,
-  staminaRegen: 22,         // per second
-  staminaAttack: 15,
-  staminaRoll: 20,
-  staminaBlockDrain: 10,    // per second while holding shield
-  staminaSprintDrain: 12,   // per second
-  staminaEmptyPenalty: 1.2, // seconds of "vulnerable" (no actions) at 0 stamina
-  // combat timing
-  attackCooldown: 0.45,     // seconds between slashes
-  attackRange: 2.6,
-  // DIAGONAL-ONLY: the sword hits inside two cones centred on the two
-  // forward diagonals (±45° from facing). Each cone is DIAGONAL_CONE_WIDTH
-  // wide, so the straight-ahead dead zone is 90° - cone width = 40°.
-  // NOTE on the brief: the brief says "±50° around each diagonal", taken
-  // literally that would cover straight ahead (45° away from a diagonal),
-  // which would delete the rule entirely. We read it as a 50°-wide cone
-  // (±25° around each diagonal) — generous, but straight-ahead enemies
-  // still take no damage, which IS the rule.
-  diagonalConeWidthDeg: 50,
-  // AIM ASSIST (QA 2026-11-06, after the first real browser playtest):
-  // a target within aimAssistDeg of a cone EDGE still counts as a hit —
-  // the slash "snaps" to the nearest diagonal. Straight ahead stays a
-  // miss: |angle| must still be >= deadZoneMinDeg. Effective hit zone is
-  // therefore |angle| in [5°, 85°] instead of [20°, 70°]; the dead zone
-  // straight ahead shrinks from 40° to 10° but is NOT removed.
-  aimAssistDeg: 15,
-  deadZoneMinDeg: 5,
-  parryWindow: 0.35,        // seconds after RMB press that a parry counts
-  parryStun: 1.6,            // seconds the parried enemy is stunned
-  parrySouls: 2,            // souls granted by a successful parry
-  dodgeDuration: 0.38,
-  dodgeSpeed: 13,
-  dodgeIFrames: 0.45,        // invulnerable seconds during a roll
-  healAmount: 50,
-  healsPerWave: 2,
-  // --- enemies: HP / damage / speed / attack range ---
-  // QA 2026-11-06 (Wave-1 tuning, after the playtest death at 00:16):
-  // pawn windup 0.6->0.9s and dmg 10->8, speed 2.4->2.0, and the global
-  // enemyAttackCooldown 2.2->2.8s below. Before: 2 pawns attacking on
-  // tokens dealt ~20 dmg per ~3.6s cycle, so a player who stood still
-  // (still learning the controls, and unable to attack because of the
-  // pointer-lock bug) died in ~16-18s. After: ~16 dmg per ~4.6s cycle,
-  // and the pawns take ~5s to reach the player, so a new player who
-  // moves, rolls or heals survives Wave 1 more often than not. Waves 2-3
-  // keep their original numbers — they are meant to be harder, and by
-  // then the player has the promotion buff and Souls.
+  // --- player (ORIGINAL brief numbers, faithful) ---
+  playerMaxHp: 1,           // 1 life — one hit kills (see shop: +HP / revive)
+  playerDamage: 1,          // 1 damage per attack (original design)
+  healsPerWave: 1,          // free heal charges refilled each wave
+  healAmount: 1,            // a heal restores 1 HP
+  // --- enemies: HP / damage (original brief: every piece 5 HP, 1 dmg) ---
   enemies: {
-    pawn:     { hp: 30,  dmg: 8, speed: 2.0, range: 1.9, windup: 0.9 },
-    knight:   { hp: 60,  dmg: 15, speed: 3.0, range: 6.0, windup: 0.8 },
-    bishop:   { hp: 50,  dmg: 12, speed: 2.2, range: 9.0, windup: 0.9 },
-    rook:     { hp: 80,  dmg: 18, speed: 2.6, range: 9.0, windup: 1.0 },
-    assassin: { hp: 50,  dmg: 20, speed: 3.6, range: 5.0, windup: 0.5 },
-    queen:    { hp: 900, dmg: 25, speed: 3.4, range: 2.4, windup: 0.7 },
+    pawn:     { hp: 5, dmg: 1 },
+    knight:   { hp: 5, dmg: 1 },
+    bishop:   { hp: 5, dmg: 1 },
+    rook:     { hp: 5, dmg: 1 },
+    assassin: { hp: 5, dmg: 1 },
+    // Queen: the VIDEO number is 900 HP, but at 1 damage per hit that is
+    // 900 attacks — unplayable in a turn-based demo. DEMO-SCALED to 20 HP
+    // (20 clean hits); the plan doc says the real number must be set from
+    // target fight length and measured player DPS, not copied from video.
+    queen:    { hp: 20, dmg: 1, videoHp: 900 },
   },
-  // ATTACK TOKEN RULE (mandatory, from the plan): at most this many enemies
-  // may be in an attacking state at the same time. The rest must circle or
-  // wait on cooldown — this is what makes 1-vs-many fair in real time.
-  tokenCap: 2,
-  enemyAttackCooldown: 2.8, // seconds between an enemy's attack attempts (was 2.2 — see Wave-1 note above)
-  // --- Soul-dash (replaces the old turn-based 1-use card) ---
-  soulDashDistance: 5,
-  soulDashDamage: 20,
-  // --- Queen boss ---
-  queenAoeDelay: 1.5,       // red circle fills, then explodes
-  queenAoeRadius: 2.6,
-  queenAoeDamage: 30,
-  queenSwordRainCount: 5,
-  // --- waves ---
-  waves: [
-    { name: 'WAVE 1 — TỐT ĐEN', spawn: ['pawn', 'pawn', 'pawn'] },
-    { name: 'WAVE 2 — MÃ + TƯỢNG', spawn: ['knight', 'bishop', 'pawn', 'pawn'] },
-    { name: 'WAVE 3 — XE + SÁT THỦ', spawn: ['rook', 'bishop', 'assassin'] },
-    { name: 'BOSS — THE QUEEN', spawn: ['queen'] },
-  ],
-  // --- misc ---
+  // --- gold / shop ---
+  goldPerKill: { pawn: 10, knight: 15, bishop: 15, rook: 20, assassin: 20, queen: 0 },
+  waveClearBonus: 30,
+  shop: {
+    armor:  { name: 'Giáp +1 HP',   desc: 'Máu tối đa +1 và hồi đầy máu', cost: 30 },
+    revive: { name: 'Hồi sinh',     desc: 'Chết 1 lần trong wave sẽ tự hồi sinh tại ô xuất phát', cost: 50 },
+    knife:  { name: 'Dao',          desc: 'Sát thương cận chiến +1 (vẫn chém chéo)', cost: 40, once: true },
+    gun:    { name: 'Súng',         desc: 'Bắn thẳng tới 3 ô, tốn 1 hành động', cost: 60, once: true },
+  },
+  // --- turn rules ---
+  actionsPerTurn: 2,        // each player segment = 2 actions, move+attack share them
+  warningsPerWave: 3,       // warnings before walking into an attacked square
+  promoHitsToUnlock: 3,     // attack the promotion square 3 times to unlock
+  enemyIntentDelay: 0.9,    // seconds the enemy's intended square stays red before it acts
+  enemyActDelay: 0.45,      // pause after an enemy acts, before the next turn
+  queenAoeSize: 3,          // Queen AoE is a 3x3 area, telegraphed one turn ahead
+  queenLineRange: 4,        // Queen line attack range (squares)
   pushbackBonus: 1,         // +damage when a pushed enemy hits edge/another enemy
-  soulDropRecoverRadius: 1.4,
-  cameraDistance: 7.5,
-  cameraHeight: 3.6,
+  cameraHeight: 20,
+  cameraBack: 13,
   pixelRatioCap: 1.5,
 };
 
@@ -110,56 +66,22 @@ const CONFIG = {
 // Tiny DOM helpers
 // ---------------------------------------------------------------------------
 const $ = (id) => document.getElementById(id);
-// Pointer-lock state (QA 2026-11-06 — see the input section for the full
-// story). Declared here because lockPointer() is defined up top.
-let pointerLocked = false;   // is the pointer currently locked to the canvas?
-let lockAcquiredAt = 0;      // performance.now() of the last lock acquisition
-let lockWasHeld = false;     // was a lock ever actually held this session?
-let lockUnavailable = false; // browser refused pointer lock -> drag-to-look
-let lockToastShown = false;  // only explain the fallback once per session
-const POINTER_LOCK_GRACE_MS = 600; // lock lost within this long of acquiring
-  // it is treated as a transient failure (bad click, automation, etc.),
-  // NOT as the user pressing Esc — so it must not open the pause screen.
-function lockPointer() {
-  // QA 2026-11-06: pointer lock used to be all-or-nothing — if the browser
-  // refused it, EVERY left click fell into "try to lock, don't attack" and
-  // the player could never attack with the mouse (this is what the first
-  // browser playtest hit). Now a refusal is detected and the game falls
-  // back to drag-to-look (see the input section): the game never dead-ends.
-  if (lockUnavailable) return false;
-  if (document.pointerLockElement === canvas) return true;
-  try {
-    const r = canvas.requestPointerLock();
-    if (r && r.catch) r.catch((err) => {
-      // Chrome rejects a re-lock for ~1.25s after the user pressed Esc.
-      // That is TRANSIENT — do not mark the lock unavailable, just wait;
-      // the next click retries. Any other failure means this browser
-      // will not give us pointer lock at all -> drag-to-look fallback.
-      const msg = String((err && err.message) || '');
-      if (/exited the lock/i.test(msg)) return;
-      lockUnavailable = true;
-      if (!lockToastShown) {
-        lockToastShown = true;
-        showToast('Không khóa được chuột — kéo chuột để xoay camera, chuột trái vẫn chém được.');
-      }
-    });
-  } catch (err) { lockUnavailable = true; }
-  return false;
-}
-const hud = $('hud'), timerEl = $('timer'), waveEl = $('wave-label');
-const hpFill = $('hp-fill'), stFill = $('st-fill'), soulsEl = $('souls');
-const healsEl = $('heals'), soulSlotEl = $('soul-slot'), tutorialEl = $('tutorial');
+const hud = $('hud'), waveEl = $('wave-label'), queueEl = $('turn-queue');
+const hpEl = $('hp'), actionsEl = $('actions'), goldEl = $('gold');
+const warningsEl = $('warnings'), cardsEl = $('cards'), bossWrap = $('boss-wrap');
+const bossFill = $('boss-fill'), bossLabel = $('boss-name');
 const bannerEl = $('banner'), toastEl = $('toast'), vignette = $('damage-vignette');
-const bossWrap = $('boss-wrap'), bossFill = $('boss-fill');
+const shopEl = $('screen-shop'), shopGoldEl = $('shop-gold'), shopItemsEl = $('shop-items');
 const screens = {
   title: $('screen-title'), pause: $('screen-pause'), queen: $('screen-queen'),
-  win: $('screen-win'), lose: $('screen-lose'),
+  win: $('screen-win'), lose: $('screen-lose'), shop: shopEl,
+  promote: $('screen-promote'),
 };
 function showScreen(name) {
   for (const [k, el] of Object.entries(screens)) el.classList.toggle('hidden', k !== name);
   if (!name) for (const el of Object.values(screens)) el.classList.add('hidden');
 }
-function showToast(text, ms = 2500) {
+function showToast(text, ms = 3000) {
   toastEl.textContent = text;
   clearTimeout(showToast._t);
   showToast._t = setTimeout(() => { toastEl.textContent = ''; }, ms);
@@ -189,19 +111,20 @@ function beep(freq, dur = 0.12, type = 'sine', vol = 0.15, when = 0) {
   } catch (e) { /* audio is a nice-to-have; never crash the game for it */ }
 }
 const sfx = {
-  swing: () => beep(300, 0.08, 'sawtooth', 0.06),
+  move: () => beep(300, 0.07, 'triangle', 0.1),
   hit: () => beep(180, 0.1, 'square', 0.12),
-  hurt: () => { beep(110, 0.2, 'sawtooth', 0.15); },
-  parry: () => { beep(880, 0.1, 'sine', 0.15); beep(1320, 0.16, 'sine', 0.12, 0.07); },
-  telegraph: () => beep(1200, 0.09, 'sine', 0.07),
+  hurt: () => beep(110, 0.2, 'sawtooth', 0.15),
+  warn: () => { beep(880, 0.12, 'sine', 0.14); beep(660, 0.16, 'sine', 0.12, 0.1); },
   die: () => beep(70, 0.4, 'sawtooth', 0.14),
   pickup: () => beep(660, 0.09, 'sine', 0.12),
   promotion: () => { beep(523, 0.12, 'sine', 0.14); beep(784, 0.2, 'sine', 0.14, 0.1); },
   wave: () => { beep(392, 0.14, 'triangle', 0.14); beep(523, 0.2, 'triangle', 0.14, 0.12); },
+  gold: () => beep(990, 0.1, 'sine', 0.1),
 };
 
 // ---------------------------------------------------------------------------
-// Three.js scene
+// Three.js scene — fixed angled top-down camera: the whole board must be
+// visible at once, because this is a tactics game, not a third-person one.
 // ---------------------------------------------------------------------------
 const canvas = $('game-canvas');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -212,12 +135,13 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x120404);
-scene.fog = new THREE.Fog(0x120404, 18, 46);
+scene.fog = new THREE.Fog(0x120404, 30, 70);
 
-const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 120);
-scene.add(camera); // so a small light can ride with the camera if needed
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 150);
+camera.position.set(0, CONFIG.cameraHeight, CONFIG.cameraBack);
+camera.lookAt(0, 0, -0.5);
+scene.add(camera);
 
-// Warm key light (with shadows) + red rim light, like the video's dark-red mood.
 const keyLight = new THREE.DirectionalLight(0xffe0b3, 2.2);
 keyLight.position.set(8, 14, 6);
 keyLight.castShadow = true;
@@ -229,8 +153,7 @@ scene.add(new THREE.AmbientLight(0x604040, 0.7));
 const rimLight = new THREE.DirectionalLight(0xff2a1a, 1.1);
 rimLight.position.set(-6, 5, -10);
 scene.add(rimLight);
-const hemi = new THREE.HemisphereLight(0x8a5a4a, 0x1a0505, 0.5);
-scene.add(hemi);
+scene.add(new THREE.HemisphereLight(0x8a5a4a, 0x1a0505, 0.5));
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -240,7 +163,8 @@ window.addEventListener('resize', () => {
 
 // ---------------------------------------------------------------------------
 // Board: 8x8 tiles, alternating dark red / near-black, plus edge glow.
-// Tile centres run from -7..+7 (tileSize 2). Far rank (promotion) is z = -7.
+// Grid: r = 0 (far rank, enemy side) .. 7 (near rank, player side),
+// c = 0..7. Tile centres run from -7..+7 (tileSize 2).
 // ---------------------------------------------------------------------------
 const BOARD_HALF = (CONFIG.boardTiles * CONFIG.tileSize) / 2; // 8
 const tileGeo = new THREE.BoxGeometry(CONFIG.tileSize, 0.3, CONFIG.tileSize);
@@ -256,7 +180,6 @@ for (let r = 0; r < CONFIG.boardTiles; r++) {
     tiles.push(t);
   }
 }
-// Ground beyond the board + glowing edge frame.
 const ground = new THREE.Mesh(
   new THREE.PlaneGeometry(90, 90),
   new THREE.MeshStandardMaterial({ color: 0x0a0202, roughness: 1 }));
@@ -267,18 +190,36 @@ const edgeGlow = new THREE.Mesh(
   new THREE.MeshBasicMaterial({ color: 0xaa2211 }));
 edgeGlow.position.y = -0.28;
 scene.add(edgeGlow);
-// Promotion tile (far rank, centre of the far edge) — glows when active.
-const promoTile = new THREE.Mesh(
-  new THREE.BoxGeometry(CONFIG.tileSize, 0.42, CONFIG.tileSize),
-  new THREE.MeshBasicMaterial({ color: 0xffd34d, transparent: true, opacity: 0.0 }));
-promoTile.position.set(0, -0.1, -7);
-scene.add(promoTile);
-let promoActive = false;
+
+// Square-highlight overlays (one reusable mesh per kind, repositioned).
+function makeHighlight(color, opacity) {
+  const m = new THREE.Mesh(
+    new THREE.PlaneGeometry(CONFIG.tileSize * 0.94, CONFIG.tileSize * 0.94),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false }));
+  m.rotation.x = -Math.PI / 2;
+  m.position.y = 0.06;
+  m.visible = false;
+  scene.add(m);
+  return m;
+}
+const hlMove = [], hlAttack = [], hlDanger = [];
+for (let i = 0; i < 64; i++) {
+  hlMove.push(makeHighlight(0x27ae60, 0.55));   // green = legal move
+  hlAttack.push(makeHighlight(0xe74c3c, 0.65)); // red = attackable enemy
+  hlDanger.push(makeHighlight(0xff8800, 0.5));  // orange = enemy intent / danger
+}
+const hlHover = makeHighlight(0xffffff, 0.25);
+const hlPromo = makeHighlight(0xffd34d, 0.7);   // gold = promotion square
+const hlPromoUnlocked = makeHighlight(0x2ecc71, 0.85);
+function placeHl(mesh, r, c) { mesh.position.x = (c - 3.5) * 2; mesh.position.z = (r - 3.5) * 2; mesh.visible = true; }
+function hideAllHl() {
+  for (const arr of [hlMove, hlAttack, hlDanger]) for (const m of arr) m.visible = false;
+  hlHover.visible = false;
+}
 
 // ---------------------------------------------------------------------------
-// Procedural chess pieces (LatheGeometry profiles — the classic way to turn
-// a chess piece). White = hero, black = enemies. Knight gets a stylised
-// horse head from boxes/cones because a lathe cannot make a horse.
+// Procedural chess pieces (LatheGeometry profiles). White = hero, black =
+// enemies. Knight gets a stylised horse head from boxes/cones.
 // ---------------------------------------------------------------------------
 function latheFromProfile(points, material) {
   const pts = points.map(([x, y]) => new THREE.Vector2(x, y));
@@ -305,7 +246,6 @@ function makeRookMesh(mat) {
   g.add(latheFromProfile(
     [[0, 0], [0.5, 0], [0.5, 0.08], [0.36, 0.16], [0.28, 0.5], [0.34, 0.9],
      [0.42, 1.0], [0.42, 1.25], [0, 1.25]], mat));
-  // battlements
   for (let i = 0; i < 4; i++) {
     const b = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.22, 0.2), mat);
     const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
@@ -331,7 +271,7 @@ function makeQueenMesh(mat) {
   g.add(latheFromProfile(
     [[0, 0], [0.55, 0], [0.55, 0.08], [0.38, 0.16], [0.26, 0.55], [0.2, 1.0],
      [0.3, 1.2], [0.2, 1.45], [0.34, 1.6], [0.34, 1.7], [0, 1.7]], mat));
-  for (let i = 0; i < 6; i++) { // crown points
+  for (let i = 0; i < 6; i++) {
     const a = (i / 6) * Math.PI * 2;
     const spike = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.34, 8), goldMat);
     spike.position.set(Math.cos(a) * 0.3, 1.88, Math.sin(a) * 0.3);
@@ -353,8 +293,6 @@ function makeKingMesh(mat) {
   return g;
 }
 function makeKnightMesh(mat) {
-  // Stylised horse head: lathe base + boxes/cones. Reads as a knight at
-  // game distance; honest stylisation, not a real horse model.
   const g = new THREE.Group();
   g.add(latheFromProfile(
     [[0, 0], [0.48, 0], [0.48, 0.07], [0.34, 0.15], [0.26, 0.5], [0.3, 0.7], [0, 0.7]], mat));
@@ -382,7 +320,6 @@ const PIECE_BUILDERS = {
 };
 function makePieceMesh(type, isWhite) {
   const mesh = PIECE_BUILDERS[type](isWhite ? whiteMat : blackMat);
-  // Scale queens/kings/knights up a little so the hierarchy reads.
   const s = type === 'queen' ? 1.25 : type === 'king' ? 1.3 : type === 'knight' || type === 'assassin' ? 1.1 : 1;
   mesh.scale.setScalar(s);
   return mesh;
@@ -404,241 +341,16 @@ function spawnFloater(text, pos, color) {
   const sp = makeFloatingText(text, color);
   sp.position.copy(pos).add(new THREE.Vector3(0, 1.6, 0));
   scene.add(sp);
-  floaters.push({ sp, life: 1.6 }); // QA 2026-11-06: was 0.9s — damage numbers vanished before a screenshot (or a player) could read them.
+  floaters.push({ sp, life: 1.6 });
 }
-
-// ---------------------------------------------------------------------------
-// Game state
-// ---------------------------------------------------------------------------
-const STATE = {
-  phase: 'title',        // title | playing | paused | queenChoice | win | lose
-  waveIndex: 0,
-  time: 0,               // timer counting up (top centre), runs only while playing
-  kills: 0,
-  souls: 0,              // currency (parry +2, kill +5)
-  soulDash: null,        // { type } — at most ONE Soul held (the last kill's)
-  damageBuff: 1,         // promotion buff for the next wave
-  tokensInUse: 0,        // attack-token accounting (see CONFIG.tokenCap)
-  queenDefeated: false,
-  waveCleared: false,    // set when the current wave's enemies are all dead
-};
-const player = {
-  group: new THREE.Group(),
-  hp: CONFIG.playerMaxHp,
-  stamina: CONFIG.staminaMax,
-  heals: CONFIG.healsPerWave,
-  pos: new THREE.Vector3(0, 0, 5),
-  vel: new THREE.Vector3(),
-  yaw: 0,                // facing direction (radians, 0 = facing -Z, far rank)
-  attackCd: 0, parryTimer: 0, blockHeld: false,
-  rollTimer: 0, rollDir: new THREE.Vector3(),
-  iframeTimer: 0, vulnerableTimer: 0, healCd: 0,
-  dead: false,
-};
-let camYaw = 0, camPitch = 0.32;   // orbit camera; yaw 0 = camera behind player looking -Z
-let damageBuffFlash = 0;
-
-// Hero pawn + sword + shield (attached so the swing animation is visible).
-const heroMesh = makePieceMesh('pawn', true);
-player.group.add(heroMesh);
-const sword = new THREE.Group();
-const blade = new THREE.Mesh(new THREE.BoxGeometry(0.09, 1.15, 0.22),
-  new THREE.MeshStandardMaterial({ color: 0xd8d8e0, roughness: 0.2, metalness: 0.9 }));
-blade.position.y = 0.75; blade.castShadow = true;
-const hilt = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.3, 0.08),
-  new THREE.MeshStandardMaterial({ color: 0x5a3a1a, roughness: 0.8 }));
-hilt.position.y = 0.12;
-sword.add(blade, hilt);
-sword.position.set(0.55, 0.9, 0.25);
-sword.rotation.z = -0.5;
-player.group.add(sword);
-const shield = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.08, 20),
-  new THREE.MeshStandardMaterial({ color: 0x8a6a2a, roughness: 0.4, metalness: 0.6 }));
-shield.rotation.x = Math.PI / 2; shield.rotation.z = 0.3;
-shield.position.set(-0.55, 1.0, 0.15); shield.castShadow = true;
-player.group.add(shield);
-player.group.position.copy(player.pos);
-scene.add(player.group);
-// Faint diagonal-cone hint, shown briefly on every slash so the player can
-// LEARN the diagonal-only rule instead of guessing why a hit missed.
-const coneHintMat = new THREE.MeshBasicMaterial({
-  color: 0xffd34d, transparent: true, opacity: 0.0, side: THREE.DoubleSide, depthWrite: false });
-const coneHint = new THREE.Group();
-// Wedges centred on the two forward diagonals (local forward is -Z).
-// A local circle angle phi maps to world (cos phi, 0, -sin phi), so the
-// diagonals sit at phi = 45 deg and phi = 135 deg.
-// QA 2026-11-06: the wedges now show the EFFECTIVE hit zone — cone width
-// plus the aim assist (see CONFIG.aimAssistDeg) — so the gold flash on a
-// slash shows where a hit can actually land. The 10° dead zone straight
-// ahead (2 x deadZoneMinDeg) is the visible gap between the wedges.
-const coneHalfEffDeg = CONFIG.diagonalConeWidthDeg / 2 + CONFIG.aimAssistDeg;
-for (const startDeg of [45 - coneHalfEffDeg, 135 - coneHalfEffDeg]) {
-  const cone = new THREE.Mesh(
-    new THREE.CircleGeometry(CONFIG.attackRange, 20,
-      THREE.MathUtils.degToRad(startDeg),
-      THREE.MathUtils.degToRad(coneHalfEffDeg * 2)), coneHintMat);
-  cone.rotation.x = -Math.PI / 2;
-  cone.position.y = 0.06;
-  coneHint.add(cone);
-}
-coneHint.position.copy(player.pos);
-scene.add(coneHint);
-let coneHintTimer = 0;
-
-// ---------------------------------------------------------------------------
-// Input — pointer lock for mouse orbit, with a drag-to-look fallback.
-// ---------------------------------------------------------------------------
-// QA 2026-11-06 (the playtest bug): the old code paused the game on EVERY
-// pointerlockchange loss while playing, and a left click while unlocked
-// only ever tried to (re-)lock — it never attacked. So a player whose
-// browser refused pointer lock could never attack at all, and a click
-// that should have been an attack could land the player on the pause
-// screen instead. The rules now:
-//  * First click while unlocked LOCKS the pointer (no attack on that click).
-//  * Later LMB clicks attack (when locked, or when lock is unavailable).
-//  * Losing the lock pauses ONLY if the lock was genuinely held for a
-//    while (user pressed Esc / switched window). A lock lost within
-//    POINTER_LOCK_GRACE_MS of being acquired is transient — stay playing.
-//  * If pointer lock is unavailable/blocked, the game stays fully
-//    playable: plain mouse movement orbits the camera (drag-to-look) and
-//    LMB attacks directly. There is no dead state.
-//  * Esc pauses when NOT locked (in locked mode the browser eats Esc and
-//    the pointerlockchange handler below does the pausing).
-// ---------------------------------------------------------------------------
-const keys = {};
-window.addEventListener('keydown', (e) => {
-  if (e.code === 'Space') e.preventDefault();
-  keys[e.code] = true;
-  if (e.code === 'Escape') {
-    if (STATE.phase === 'playing' && !pointerLocked) pauseGame();
-    else if (STATE.phase === 'paused') resumeGame();
-    return;
+function updateFloaters(dt) {
+  for (let i = floaters.length - 1; i >= 0; i--) {
+    const f = floaters[i];
+    f.life -= dt;
+    f.sp.position.y += dt * 1.2;
+    f.sp.material.opacity = Math.max(0, f.life / 1.6);
+    if (f.life <= 0) { scene.remove(f.sp); floaters.splice(i, 1); }
   }
-  if (STATE.phase === 'playing') {
-    if (e.code === 'KeyH') tryHeal();
-    if (e.code === 'KeyF') trySoulDash();
-    if (e.code === 'Space') tryDodge();
-  }
-});
-window.addEventListener('keyup', (e) => { keys[e.code] = false; });
-canvas.addEventListener('click', () => {
-  // Backup re-lock attempt (mousedown below is the primary one). Lock-only:
-  // a click must never attack, or the lock-acquiring click becomes a slash.
-  if (STATE.phase === 'playing' && !pointerLocked && !lockUnavailable) lockPointer();
-});
-document.addEventListener('pointerlockchange', () => {
-  if (document.pointerLockElement === canvas) {
-    pointerLocked = true;
-    lockAcquiredAt = performance.now();
-    lockWasHeld = true;
-    lockUnavailable = false;
-  } else {
-    pointerLocked = false;
-    // Pause only on a REAL lock loss (held for a while, then Esc / Alt-Tab).
-    if (STATE.phase === 'playing' && lockWasHeld &&
-        performance.now() - lockAcquiredAt > POINTER_LOCK_GRACE_MS) {
-      pauseGame();
-    }
-    // Otherwise: transient loss (never really acquired, or lost instantly)
-    // — stay in the game; the next click retries the lock, and if the
-    // browser keeps refusing, lockUnavailable flips on and drag-to-look
-    // takes over instead of pausing the player out of the fight.
-  }
-});
-document.addEventListener('pointerlockerror', () => {
-  // The browser refused pointer lock outright (permissions, automation,
-  // iframe rules...). Fall back to drag-to-look instead of a dead state.
-  lockUnavailable = true;
-  if (STATE.phase === 'playing' && !lockToastShown) {
-    lockToastShown = true;
-    showToast('Không khóa được chuột — kéo chuột để xoay camera, chuột trái vẫn chém được.');
-  }
-});
-document.addEventListener('mousemove', (e) => {
-  if (STATE.phase !== 'playing') return;
-  if (pointerLocked || lockUnavailable) {
-    // Locked: classic pointer-lock orbit. Unlocked fallback: plain mouse
-    // movement orbits (movementX/Y exist on normal mousemove too). The
-    // HUD has pointer-events:none and there is no clickable UI while
-    // playing, so plain-move orbit cannot steal clicks from anything.
-    camYaw -= e.movementX * 0.0028;
-    camPitch = THREE.MathUtils.clamp(camPitch + e.movementY * 0.0022, 0.08, 0.9);
-  }
-  // Not locked yet and lock not known-unavailable: don't spin the camera
-  // on hover — wait for the first click to resolve the lock.
-});
-canvas.addEventListener('mousedown', (e) => {
-  if (STATE.phase !== 'playing') return;
-  if (e.button === 0) {
-    // Locked, or lock unavailable (drag-to-look mode): this click attacks.
-    // Unlocked and lock still possible: this click (re-)locks instead.
-    if (pointerLocked || lockUnavailable) tryAttack();
-    else lockPointer();
-    return;
-  }
-  if (e.button === 2) {
-    if (pointerLocked || lockUnavailable) {
-      player.parryTimer = CONFIG.parryWindow; player.blockHeld = true;
-    } else lockPointer();
-  }
-});
-window.addEventListener('mouseup', (e) => {
-  if (e.button === 2) player.blockHeld = false;
-});
-canvas.addEventListener('contextmenu', (e) => e.preventDefault());
-
-// ---------------------------------------------------------------------------
-// Telegraphs (glowing tile / line / circle) — every dangerous attack gets one.
-// ---------------------------------------------------------------------------
-const telegraphs = [];
-function addTelegraph(kind, pos, opts = {}) {
-  let mesh;
-  const color = opts.color || 0xff2211;
-  if (kind === 'circle') {
-    mesh = new THREE.Mesh(new THREE.CircleGeometry(opts.radius || 2, 28),
-      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false }));
-    mesh.rotation.x = -Math.PI / 2;
-  } else if (kind === 'line') {
-    mesh = new THREE.Mesh(new THREE.PlaneGeometry(opts.width || 1.2, opts.length || 8),
-      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.4, side: THREE.DoubleSide, depthWrite: false }));
-    mesh.rotation.x = -Math.PI / 2;
-    mesh.rotation.z = opts.angle || 0;
-  } else { // 'tile'
-    mesh = new THREE.Mesh(new THREE.PlaneGeometry(CONFIG.tileSize, CONFIG.tileSize),
-      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false }));
-    mesh.rotation.x = -Math.PI / 2;
-  }
-  mesh.position.set(pos.x, 0.08, pos.z);
-  scene.add(mesh);
-  const t = { mesh, life: opts.life || 1, maxLife: opts.life || 1, onDone: opts.onDone || null, pulse: 0 };
-  telegraphs.push(t);
-  if (opts.sound !== false) sfx.telegraph();
-  return t;
-}
-function updateTelegraphs(dt) {
-  for (let i = telegraphs.length - 1; i >= 0; i--) {
-    const t = telegraphs[i];
-    t.life -= dt; t.pulse += dt * 10;
-    t.mesh.material.opacity = 0.25 + 0.25 * Math.abs(Math.sin(t.pulse));
-    if (t.life <= 0) {
-      scene.remove(t.mesh);
-      t.mesh.material.dispose();
-      telegraphs.splice(i, 1);
-      if (t.onDone) t.onDone();
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Projectiles + particle shatter on enemy death
-// ---------------------------------------------------------------------------
-const projectiles = [];
-function spawnProjectile(from, dir, speed, dmg, isEnemy) {
-  const m = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 10),
-    new THREE.MeshBasicMaterial({ color: isEnemy ? 0xff5533 : 0xffd34d }));
-  m.position.copy(from).add(new THREE.Vector3(0, 1.1, 0));
-  scene.add(m);
-  projectiles.push({ mesh: m, dir: dir.clone().normalize(), speed, dmg, isEnemy, life: 4 });
 }
 const fragments = [];
 function shatter(pos, color = 0x222222) {
@@ -665,790 +377,997 @@ function updateFragments(dt) {
     if (f.life <= 0) { scene.remove(f.mesh); fragments.splice(i, 1); }
   }
 }
-function updateFloaters(dt) {
-  for (let i = floaters.length - 1; i >= 0; i--) {
-    const f = floaters[i];
-    f.life -= dt;
-    f.sp.position.y += dt * 1.2;
-    f.sp.material.opacity = Math.max(0, f.life / 1.6);
-    if (f.life <= 0) { scene.remove(f.sp); floaters.splice(i, 1); }
+
+// ---------------------------------------------------------------------------
+// Grid helpers. r = row 0..7 (0 = far rank, enemy side), c = col 0..7.
+// World: x = (c-3.5)*2, z = (r-3.5)*2. Player starts near side, row 6.
+// ---------------------------------------------------------------------------
+const sqPos = (r, c) => new THREE.Vector3((c - 3.5) * 2, 0, (r - 3.5) * 2);
+const inBoard = (r, c) => r >= 0 && r < 8 && c >= 0 && c < 8;
+const key = (r, c) => r * 8 + c;
+const DIRS_ORTHO = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+const DIRS_DIAG = [[-1, -1], [-1, 1], [1, -1], [1, 1]];
+const DIRS_ALL = [...DIRS_ORTHO, ...DIRS_DIAG];
+const KNIGHT_JUMPS = [[-2, -1], [-2, 1], [-1, -2], [-1, 2], [1, -2], [1, 2], [2, -1], [2, 1]];
+
+// ---------------------------------------------------------------------------
+// Game state
+// ---------------------------------------------------------------------------
+const STATE = {
+  phase: 'title',        // title | playing | paused | shop | promoteChoice | queenChoice | win | lose
+  waveIndex: 0,
+  turnCount: 0,          // total player segments played (timer substitute)
+  gold: 0,
+  kills: 0,
+  warningsLeft: CONFIG.warningsPerWave,
+  warningsExhaustedShown: false,
+  promo: null,           // {r, c, hits, unlocked}
+  queenAoe: null,        // {squares: [{r,c}], } pending Queen AoE, resolves on her next turn
+  turnQueue: [],         // [{kind:'player'|'enemy', enemy}] — interleaved order
+  turnState: 'idle',     // player | enemyIntent | enemyAct | busy
+  turnTimer: 0,
+  pendingAdvance: false, // stepped onto the promo square on the last action:
+                          // the turn advances only AFTER the form is chosen
+  currentEnemy: null,
+  currentIntent: null,
+  queenDefeated: false,
+};
+const player = {
+  group: new THREE.Group(),
+  pieceMesh: null,
+  r: 6, c: 3,            // start square, near side
+  hp: CONFIG.playerMaxHp,
+  maxHp: CONFIG.playerMaxHp,
+  revives: 0,
+  heals: CONFIG.healsPerWave,
+  damageBonus: 0,        // +1 from the knife
+  hasGun: false,
+  form: null,            // null = pawn; 'knight'|'bishop'|'rook'|'queen' after promotion (wave only)
+  cardForm: null,        // movement granted by a card, this player segment only
+  cardUsedThisSegment: false,
+  actions: 0,
+  hand: { pawn: 0, knight: 0, bishop: 0, rook: 0, queen: 0 },
+  dead: false,
+};
+const enemies = [];      // {type, r, c, hp, maxHp, group, dead, flashT}
+const START_SQ = { r: 6, c: 3 };
+
+function setPlayerPiece(type) {
+  if (player.pieceMesh) player.group.remove(player.pieceMesh);
+  player.pieceMesh = makePieceMesh(type, true);
+  player.group.add(player.pieceMesh);
+}
+// Hero pawn + sword + shield.
+setPlayerPiece('pawn');
+const sword = new THREE.Group();
+const blade = new THREE.Mesh(new THREE.BoxGeometry(0.09, 1.15, 0.22),
+  new THREE.MeshStandardMaterial({ color: 0xd8d8e0, roughness: 0.2, metalness: 0.9 }));
+blade.position.y = 0.75; blade.castShadow = true;
+const hilt = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.3, 0.08),
+  new THREE.MeshStandardMaterial({ color: 0x5a3a1a, roughness: 0.8 }));
+hilt.position.y = 0.12;
+sword.add(blade, hilt);
+sword.position.set(0.55, 0.9, 0.25);
+sword.rotation.z = -0.5;
+player.group.add(sword);
+const shield = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.08, 20),
+  new THREE.MeshStandardMaterial({ color: 0x8a6a2a, roughness: 0.4, metalness: 0.6 }));
+shield.rotation.x = Math.PI / 2; shield.rotation.z = 0.3;
+shield.position.set(-0.55, 1.0, 0.15); shield.castShadow = true;
+player.group.add(shield);
+player.group.position.copy(sqPos(player.r, player.c));
+scene.add(player.group);
+
+function syncPiecePos(e) { e.group.position.copy(sqPos(e.r, e.c)); }
+function enemyAt(r, c) { return enemies.find((e) => !e.dead && e.r === r && e.c === c) || null; }
+function occupantAt(r, c) {
+  if (!player.dead && player.r === r && player.c === c) return 'player';
+  return enemyAt(r, c);
+}
+function isEmpty(r, c) { return inBoard(r, c) && !occupantAt(r, c); }
+
+// ---------------------------------------------------------------------------
+// Movement & attack sets — the chess rules, on squares.
+// mode: 'pawn' (default), or a piece type from a promotion form / a card.
+// ---------------------------------------------------------------------------
+function moveSquares(mode, r, c) {
+  const out = [];
+  if (mode === 'knight') {
+    for (const [dr, dc] of KNIGHT_JUMPS) {
+      const nr = r + dr, nc = c + dc;
+      if (isEmpty(nr, nc)) out.push({ r: nr, c: nc });
+    }
+    return out;
+  }
+  const dirs = mode === 'pawn' ? DIRS_ORTHO
+    : mode === 'bishop' ? DIRS_DIAG
+    : mode === 'rook' ? DIRS_ORTHO : DIRS_ALL;
+  const sliding = mode !== 'pawn';
+  for (const [dr, dc] of dirs) {
+    let nr = r + dr, nc = c + dc;
+    while (inBoard(nr, nc)) {
+      if (occupantAt(nr, nc)) break; // blocked — cannot jump over pieces
+      out.push({ r: nr, c: nc });
+      if (!sliding) break;
+      nr += dr; nc += dc;
+    }
+  }
+  return out;
+}
+function attackSquares(mode, r, c) {
+  // Squares the pawn (or its current form) can ATTACK from (r,c).
+  // Pawn: the 4 diagonal neighbours only — never straight ahead.
+  const out = [];
+  if (mode === 'pawn') {
+    for (const [dr, dc] of DIRS_DIAG) {
+      const nr = r + dr, nc = c + dc;
+      if (inBoard(nr, nc)) out.push({ r: nr, c: nc });
+    }
+    return out;
+  }
+  if (mode === 'knight') {
+    for (const [dr, dc] of KNIGHT_JUMPS) {
+      const nr = r + dr, nc = c + dc;
+      if (inBoard(nr, nc)) out.push({ r: nr, c: nc });
+    }
+    return out;
+  }
+  const dirs = mode === 'bishop' ? DIRS_DIAG : mode === 'rook' ? DIRS_ORTHO : DIRS_ALL;
+  for (const [dr, dc] of dirs) {
+    let nr = r + dr, nc = c + dc;
+    while (inBoard(nr, nc)) {
+      out.push({ r: nr, c: nc });
+      if (occupantAt(nr, nc)) break; // first piece in the line blocks the rest
+      nr += dr; nc += dc;
+    }
+  }
+  return out;
+}
+function playerMode() { return player.cardForm || player.form || 'pawn'; }
+function legalMoves() { return moveSquares(playerMode(), player.r, player.c); }
+function legalAttacks() {
+  // Attackable squares: enemies on an attack square, plus the promotion
+  // square when it is attackable (diagonal neighbour for a pawn).
+  const atk = attackSquares(playerMode(), player.r, player.c);
+  const out = [];
+  for (const sq of atk) {
+    const e = enemyAt(sq.r, sq.c);
+    if (e) out.push({ r: sq.r, c: sq.c, enemy: e });
+  }
+  if (STATE.promo && !STATE.promo.unlocked) {
+    const p = STATE.promo;
+    if (atk.some((s) => s.r === p.r && s.c === p.c)) out.push({ r: p.r, c: p.c, promo: true });
+  }
+  // Gun: straight line, up to 3 squares, first enemy in the line.
+  if (player.hasGun) {
+    for (const [dr, dc] of DIRS_ORTHO) {
+      for (let d = 1; d <= 3; d++) {
+        const nr = player.r + dr * d, nc = player.c + dc * d;
+        if (!inBoard(nr, nc)) break;
+        const e = enemyAt(nr, nc);
+        if (e) { out.push({ r: nr, c: nc, enemy: e, gun: true }); break; }
+        if (occupantAt(nr, nc)) break;
+      }
+    }
+  }
+  return out;
+}
+// Squares every living enemy could attack on its next turn — used for the
+// warning system. Enemy pawns attack diagonally TOWARD the player (+r).
+function dangerSquares() {
+  const set = new Set();
+  for (const e of enemies) {
+    if (e.dead) continue;
+    if (e.type === 'pawn') {
+      for (const dc of [-1, 1]) {
+        const nr = e.r + 1, nc = e.c + dc;
+        if (inBoard(nr, nc)) set.add(key(nr, nc));
+      }
+    } else if (e.type === 'knight' || e.type === 'assassin') {
+      for (const [dr, dc] of KNIGHT_JUMPS) {
+        const nr = e.r + dr, nc = e.c + dc;
+        if (inBoard(nr, nc)) set.add(key(nr, nc));
+      }
+    } else if (e.type === 'queen') {
+      for (const [dr, dc] of DIRS_ALL) {
+        let nr = e.r + dr, nc = e.c + dc;
+        while (inBoard(nr, nc)) { set.add(key(nr, nc)); if (occupantAt(nr, nc)) break; nr += dr; nc += dc; }
+      }
+    } else {
+      const dirs = e.type === 'bishop' ? DIRS_DIAG : DIRS_ORTHO;
+      for (const [dr, dc] of dirs) {
+        let nr = e.r + dr, nc = e.c + dc;
+        while (inBoard(nr, nc)) { set.add(key(nr, nc)); if (occupantAt(nr, nc)) break; nr += dr; nc += dc; }
+      }
+    }
+  }
+  return set;
+}
+
+// ---------------------------------------------------------------------------
+// Highlights: show legal moves / attacks every player segment.
+// ---------------------------------------------------------------------------
+function refreshHighlights() {
+  hideAllHl();
+  if (STATE.phase !== 'playing' || STATE.turnState !== 'player') return;
+  const moves = legalMoves();
+  moves.forEach((sq, i) => { if (i < hlMove.length) placeHl(hlMove[i], sq.r, sq.c); });
+  const atks = legalAttacks();
+  atks.forEach((sq, i) => { if (i < hlAttack.length) placeHl(hlAttack[i], sq.r, sq.c); });
+  if (STATE.promo) {
+    const p = STATE.promo;
+    placeHl(p.unlocked ? hlPromoUnlocked : hlPromo, p.r, p.c);
+  }
+  // Queen AoE telegraph must SURVIVE the player's segment: it is marked
+  // on the Queen's turn and resolves on her NEXT turn, so the player needs
+  // to see the red squares for a whole player segment to step out of them.
+  // refreshHighlights() clears all highlights, so re-draw the AoE here.
+  if (STATE.queenAoe) {
+    STATE.queenAoe.squares.forEach((sq, i) => { if (i < hlDanger.length) placeHl(hlDanger[i], sq.r, sq.c); });
   }
 }
 
 // ---------------------------------------------------------------------------
-// Enemies
+// Input — mouse-first: click a highlighted square. WASD / arrows step one
+// square orthogonally. Space ends the turn. H heals. Esc pauses.
+// No pointer lock anywhere: the camera is fixed, the mouse is a cursor.
 // ---------------------------------------------------------------------------
-const enemies = [];
-let droppedSouls = null; // { pos, amount } — dropped where the player died
-// Shared hit-flash material (see updateEnemy — never allocate per frame).
-const flashMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x661111 });
-function spawnPosFor(index, total) {
-  // Spread spawns along the far half of the board (z negative = enemy side).
-  const x = (index - (total - 1) / 2) * 3.2;
-  return new THREE.Vector3(THREE.MathUtils.clamp(x, -6, 6), 0, -5 - (index % 2) * 1.5);
+const raycaster = new THREE.Raycaster();
+const boardPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+function pickSquare(ev) {
+  const rect = canvas.getBoundingClientRect();
+  const mx = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
+  const my = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera({ x: mx, y: my }, camera);
+  const hit = new THREE.Vector3();
+  if (!raycaster.ray.intersectPlane(boardPlane, hit)) return null;
+  const c = Math.round(hit.x / 2 + 3.5);
+  const r = Math.round(hit.z / 2 + 3.5);
+  return inBoard(r, c) ? { r, c } : null;
 }
-function createEnemy(type, pos) {
-  const cfg = CONFIG.enemies[type];
-  const group = new THREE.Group();
-  group.add(makePieceMesh(type, false));
-  // Red eyes so enemies read as hostile at a glance.
-  const eye = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 8), redEyeMat);
-  eye.position.set(0, 1.25, 0.42); group.add(eye);
-  group.position.copy(pos);
-  scene.add(group);
-  const e = {
-    type, cfg, group, hp: cfg.hp, maxHp: cfg.hp,
-    state: 'approach',       // approach | windup | attack | recover | stunned | circling | jumping
-    stateT: 0, cooldown: 1 + Math.random(),
-    tokenHeld: false, targetPos: new THREE.Vector3(),
-    jumpFrom: new THREE.Vector3(), jumpTo: new THREE.Vector3(),
-    dead: false, flashT: 0,
-    // Queen-only
-    aoeTimer: 4, summonTimer: 9,
-  };
-  enemies.push(e);
-  return e;
+canvas.addEventListener('pointermove', (ev) => {
+  if (STATE.phase !== 'playing' || STATE.turnState !== 'player') { hlHover.visible = false; return; }
+  const sq = pickSquare(ev);
+  if (sq) placeHl(hlHover, sq.r, sq.c); else hlHover.visible = false;
+});
+canvas.addEventListener('pointerdown', (ev) => {
+  if (STATE.phase !== 'playing' || STATE.turnState !== 'player') return;
+  if (ev.button !== 0) return;
+  const sq = pickSquare(ev);
+  if (!sq) return;
+  handleSquareClick(sq.r, sq.c);
+});
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Space') e.preventDefault();
+  if (STATE.phase === 'playing' && STATE.turnState === 'player') {
+    const step = { KeyW: [-1, 0], ArrowUp: [-1, 0], KeyS: [1, 0], ArrowDown: [1, 0], KeyA: [0, -1], ArrowLeft: [0, -1], KeyD: [0, 1], ArrowRight: [0, 1] }[e.code];
+    if (step) { tryStep(step[0], step[1]); return; }
+    if (e.code === 'Space' || e.code === 'Enter') { endPlayerSegment(); return; }
+    if (e.code === 'KeyH') { tryHeal(); return; }
+  } else if (STATE.phase === 'playing' && e.code === 'Space') {
+    // Space during an enemy segment: skip the intent animation, act now.
+    if (STATE.turnState === 'enemyIntent') STATE.turnTimer = 0;
+    return;
+  }
+  if (e.code === 'Escape') {
+    if (STATE.phase === 'playing') pauseGame();
+    else if (STATE.phase === 'paused') resumeGame();
+  }
+});
+$('btn-end-turn').addEventListener('click', () => {
+  if (STATE.phase === 'playing' && STATE.turnState === 'player') endPlayerSegment();
+});
+
+// ---------------------------------------------------------------------------
+// Player actions — each costs 1 of the 2 actions in a player segment.
+// ---------------------------------------------------------------------------
+function spendAction() {
+  player.actions--;
+  updateHUD();
+  if (player.actions <= 0) {
+    // Stepped onto the promotion square on the last action: the turn must
+    // NOT advance until the player has chosen a form (choosePromotionForm
+    // resumes the engine via pendingAdvance).
+    if (STATE.phase === 'promoteChoice') { STATE.pendingAdvance = true; return; }
+    endPlayerSegment();
+  } else refreshHighlights();
 }
-function acquireToken(e) {
-  if (STATE.tokensInUse >= CONFIG.tokenCap) return false;
-  STATE.tokensInUse++; e.tokenHeld = true;
-  return true;
+function tryStep(dr, dc) {
+  const nr = player.r + dr, nc = player.c + dc;
+  if (!inBoard(nr, nc)) { showToast('Ngoài bàn cờ!'); return; }
+  const e = enemyAt(nr, nc);
+  if (e) { showToast('Ô đó có địch — chém chéo hoặc dùng súng để tấn công!'); return; }
+  if (!legalMoves().some((s) => s.r === nr && s.c === nc)) {
+    showToast('Quân tốt chỉ đi thẳng 1 ô (hoặc theo nước đi của thẻ / dạng đã hóa).');
+    return;
+  }
+  tryMoveTo(nr, nc);
 }
-function releaseToken(e) {
-  if (e.tokenHeld) { STATE.tokensInUse = Math.max(0, STATE.tokensInUse - 1); e.tokenHeld = false; }
+function tryMoveTo(r, c) {
+  // WARNINGS (3 per wave): walking into a square an enemy can attack
+  // stops the move with a notification — the pawn must not walk into
+  // death silently. Once the 3 warnings are spent, no more are given.
+  const danger = dangerSquares();
+  if (danger.has(key(r, c))) {
+    if (STATE.warningsLeft > 0) {
+      STATE.warningsLeft--;
+      sfx.warn();
+      showToast(`⚠ CẢNH BÁO (${STATE.warningsLeft} còn lại): ô đó đang bị địch ngắm! Nước đi đã dừng.`, 3200);
+      // Flash the dangerous square orange for a moment.
+      const idx = [...danger].indexOf(key(r, c));
+      updateHUD();
+      return; // move blocked, action NOT spent
+    }
+    if (!STATE.warningsExhaustedShown) {
+      STATE.warningsExhaustedShown = true;
+      showToast('Hết cảnh báo! Từ giờ không còn ai nhắc nữa — tự cẩn thận.', 3200);
+    }
+  }
+  movePlayerTo(r, c);
+  sfx.move();
+  checkPromotionStep(); // before spendAction: the form choice must come before the turn advances
+  spendAction();
+}
+function movePlayerTo(r, c) {
+  player.r = r; player.c = c;
+  player.group.position.copy(sqPos(r, c));
+}
+function handleSquareClick(r, c) {
+  // Clicking an attackable square attacks; clicking a legal move square
+  // moves; anything else is explained, not silently ignored.
+  const atk = legalAttacks().find((s) => s.r === r && s.c === c);
+  if (atk) { doAttack(atk); return; }
+  if (legalMoves().some((s) => s.r === r && s.c === c)) { tryMoveTo(r, c); return; }
+  const e = enemyAt(r, c);
+  if (e) {
+    showToast('Không tấn công được đó — tốt chỉ chém CHÉO 1 ô (hoặc theo dạng/thẻ/súng).');
+    return;
+  }
+  showToast('Ô đó không đi tới được trong lượt này.');
+}
+function playerDamage() { return CONFIG.playerDamage + player.damageBonus; }
+function doAttack(atk) {
+  if (atk.promo) {
+    // Attacking the promotion square (counts as an action).
+    STATE.promo.hits++;
+    sfx.hit();
+    spawnFloater(`${STATE.promo.hits}/${CONFIG.promoHitsToUnlock}`, sqPos(atk.r, atk.c), '#ffd34d');
+    if (STATE.promo.hits >= CONFIG.promoHitsToUnlock) {
+      STATE.promo.unlocked = true;
+      sfx.promotion();
+      showBanner('PHONG VƯƠNG ĐÃ MỞ — BƯỚC VÀO Ô VÀNG!');
+      showToast('Ô phong vương đã mở khóa! Bước vào đúng ô đó để hóa thân (chỉ trong wave này).', 3500);
+    } else {
+      showToast(`Đã tấn công ô phong vương ${STATE.promo.hits}/${CONFIG.promoHitsToUnlock} lần.`);
+    }
+    spendAction();
+    return;
+  }
+  const e = atk.enemy;
+  if (!e || e.dead) return;
+  const dmg = playerDamage();
+  sfx.hit();
+  damageEnemy(e, dmg, { gun: atk.gun });
+  // Push-back: the enemy is shoved 1 square away from the player along
+  // the attack direction. Edge or a blocking piece = +1 damage; pushed
+  // into another enemy = BOTH take +1.
+  const dr = Math.sign(e.r - player.r), dc = Math.sign(e.c - player.c);
+  const nr = e.r + dr, nc = e.c + dc;
+  if (!inBoard(nr, nc)) {
+    damageEnemy(e, CONFIG.pushbackBonus, { color: '#ff8844' });
+    spawnFloater(`+${CONFIG.pushbackBonus} đẩy vào biên`, sqPos(e.r, e.c), '#ff8844');
+  } else {
+    const other = enemyAt(nr, nc);
+    if (other) {
+      damageEnemy(e, CONFIG.pushbackBonus, { color: '#ff8844' });
+      damageEnemy(other, CONFIG.pushbackBonus, { color: '#ff8844' });
+      spawnFloater(`+${CONFIG.pushbackBonus} đẩy vào nhau`, sqPos(e.r, e.c), '#ff8844');
+    } else if (nr === player.r && nc === player.c) {
+      damageEnemy(e, CONFIG.pushbackBonus, { color: '#ff8844' });
+    } else {
+      e.r = nr; e.c = nc; syncPiecePos(e);
+    }
+  }
+  spendAction();
 }
 function damageEnemy(e, dmg, opts = {}) {
   if (e.dead) return;
   e.hp -= dmg;
-  e.flashT = 0.12;
-  spawnFloater(String(Math.round(dmg)), e.group.position, opts.color || '#ffd34d');
+  spawnFloater(opts.gun ? `-${dmg} 🔫` : `-${dmg}`, sqPos(e.r, e.c), opts.color || '#ffd34d');
   if (e.hp <= 0) killEnemy(e);
+  else updateHUD();
 }
 function killEnemy(e) {
   e.dead = true;
-  releaseToken(e);
-  shatter(e.group.position, 0x1a1420);
+  shatter(sqPos(e.r, e.c), 0x1a1420);
   scene.remove(e.group);
-  sfx.die();
   STATE.kills++;
-  STATE.souls += 5;
-  // Soul-dash: the kill grants the victim's Soul (max 1 held — a new kill
-  // replaces the old one). Queen's Soul is an omni-dash.
-  STATE.soulDash = { type: e.type === 'assassin' ? 'knight' : e.type };
-  showToast(`Nhặt được Soul: ${e.type.toUpperCase()} — nhấn F để Soul-dash`);
-  sfx.pickup();
-  if (e.type === 'queen') {
-    STATE.queenDefeated = true;
-    // Do NOT kill her narratively — the choice screen follows.
-    setTimeout(() => { if (STATE.phase === 'playing') openQueenChoice(); }, 900);
-  }
-}
-function pushbackEnemy(e, dir, fromPlayer) {
-  // A slash knocks the enemy back; hitting the board edge or another enemy
-  // deals +CONFIG.pushbackBonus damage to the one(s) hit (plan rule).
-  const step = 1.2;
-  const next = e.group.position.clone().addScaledVector(dir, step);
-  const hitEdge = Math.abs(next.x) > BOARD_HALF - 0.5 || Math.abs(next.z) > BOARD_HALF - 0.5;
-  let hitOther = null;
-  if (!hitEdge) {
-    for (const o of enemies) {
-      if (o !== e && !o.dead && o.group.position.distanceTo(next) < 0.9) { hitOther = o; break; }
-    }
-  }
-  e.group.position.copy(next);
-  e.group.position.x = THREE.MathUtils.clamp(e.group.position.x, -BOARD_HALF + 0.6, BOARD_HALF - 0.6);
-  e.group.position.z = THREE.MathUtils.clamp(e.group.position.z, -BOARD_HALF + 0.6, BOARD_HALF - 0.6);
-  if (hitEdge || hitOther) {
-    damageEnemy(e, CONFIG.pushbackBonus, { color: '#ff8844' });
-    if (hitOther) damageEnemy(hitOther, CONFIG.pushbackBonus, { color: '#ff8844' });
-    spawnFloater(`+${CONFIG.pushbackBonus} đẩy`, e.group.position, '#ff8844');
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Player actions
-// ---------------------------------------------------------------------------
-function playerForward() {
-  // Facing = camera yaw (the pawn turns with the camera, Dark Souls style).
-  return new THREE.Vector3(-Math.sin(camYaw), 0, -Math.cos(camYaw));
-}
-function isInDiagonalCone(targetPos) {
-  // Is the target inside one of the two forward-diagonal cones?
-  // QA 2026-11-06: the cone MATH was verified correct (cones at 20°-70°
-  // each side, 40° dead zone straight ahead, range 2.6 — a pawn standing
-  // diagonally in front at ~2 units DID take damage). The playtest misses
-  // were distance (enemies still >2.6 away) and the pointer-lock bug
-  // (clicks never reached tryAttack at all), not the cone math. The rule
-  // was still too punishing in practice, because enemies approach the
-  // player HEAD-ON (angle ~0°, dead centre of the dead zone) and a new
-  // player standing still could never land a hit. Fix, without touching
-  // the locked rule: an AIM ASSIST band of CONFIG.aimAssistDeg (15°)
-  // around each cone edge — a target just outside a cone edge still
-  // counts, as if the slash snapped to the nearest diagonal. Straight
-  // ahead stays a miss: |angle| < CONFIG.deadZoneMinDeg (5°) never hits.
-  const to = targetPos.clone().sub(player.pos); to.y = 0;
-  if (to.length() < 0.01) return false;
-  const fwd = playerForward();
-  const ang = Math.atan2(to.x, -to.z) - Math.atan2(fwd.x, -fwd.z); // signed, 0 = ahead
-  // Normalise to [-PI, PI]
-  const a = Math.atan2(Math.sin(ang), Math.cos(ang));
-  const half = THREE.MathUtils.degToRad(CONFIG.diagonalConeWidthDeg / 2);
-  const assist = THREE.MathUtils.degToRad(CONFIG.aimAssistDeg);
-  const minDead = THREE.MathUtils.degToRad(CONFIG.deadZoneMinDeg);
-  const diag = Math.PI / 4; // 45°
-  // +1e-9: float guard so a target exactly on the assist edge (85°) does
-  // not miss by one ULP of rounding.
-  return Math.abs(a) >= minDead && Math.abs(Math.abs(a) - diag) <= half + assist + 1e-9;
-}
-function tryAttack() {
-  if (player.attackCd > 0 || player.rollTimer > 0 || player.vulnerableTimer > 0) return;
-  if (player.stamina < CONFIG.staminaAttack) { showToast('Hết stamina!'); return; }
-  player.stamina -= CONFIG.staminaAttack;
-  player.attackCd = CONFIG.attackCooldown;
-  coneHintTimer = 0.35;
-  sfx.swing();
-  // Sword swing animation: quick rotate, reset in the loop.
-  sword.rotation.z = -2.2;
-  const fwd = playerForward();
-  let hitAny = false;
-  for (const e of enemies) {
-    if (e.dead) continue;
-    const d = e.group.position.distanceTo(player.pos);
-    if (d > CONFIG.attackRange) continue;
-    if (!isInDiagonalCone(e.group.position)) continue; // straight ahead = MISS
-    hitAny = true;
-    damageEnemy(e, CONFIG.playerDamage * STATE.damageBuff);
-    const dir = e.group.position.clone().sub(player.pos).setY(0).normalize();
-    pushbackEnemy(e, dir, true);
-  }
-  if (hitAny) sfx.hit();
-  else showToast('Chém hụt — nhớ: kiếm chỉ trúng theo ĐƯỜNG CHÉO!');
-  tutorialMark('attack');
-}
-function tryDodge() {
-  if (player.rollTimer > 0 || player.stamina < CONFIG.staminaRoll || player.vulnerableTimer > 0) return;
-  player.stamina -= CONFIG.staminaRoll;
-  player.rollTimer = CONFIG.dodgeDuration;
-  player.iframeTimer = CONFIG.dodgeIFrames;
-  const mv = moveInputVector();
-  player.rollDir.copy(mv.lengthSq() > 0.01 ? mv : playerForward());
-  beep(220, 0.08, 'sine', 0.08);
-  tutorialMark('dodge');
-}
-function moveInputVector() {
-  const fwd = playerForward();
-  const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
-  const v = new THREE.Vector3();
-  if (keys['KeyW']) v.add(fwd);
-  if (keys['KeyS']) v.sub(fwd);
-  if (keys['KeyD']) v.add(right);
-  if (keys['KeyA']) v.sub(right);
-  return v.lengthSq() > 0 ? v.normalize() : v;
+  const g = CONFIG.goldPerKill[e.type] || 0;
+  STATE.gold += g;
+  sfx.gold();
+  spawnFloater(`+${g} vàng`, sqPos(e.r, e.c), '#ffd34d');
+  // CARDS: killing an enemy gives that piece's consumable card.
+  player.hand[e.type] = (player.hand[e.type] || 0) + 1;
+  showToast(`Đã giết ${PIECE_NAME[e.type]}! +${g} vàng, nhận thẻ ${PIECE_NAME[e.type]}.`, 2600);
+  renderCards();
+  updateHUD();
+  if (e.type === 'queen') { onQueenDefeated(); return; }
+  checkWaveClear();
 }
 function tryHeal() {
-  if (player.heals <= 0) { showToast('Hết lượt hồi máu ở wave này!'); return; }
-  if (player.hp >= CONFIG.playerMaxHp) { showToast('Máu đã đầy!'); return; }
+  if (player.heals <= 0) { showToast('Hết lượt hồi máu ở wave này! (Mua Giáp ở shop để tăng máu tối đa.)'); return; }
+  if (player.hp >= player.maxHp) { showToast('Máu đã đầy!'); return; }
   player.heals--;
-  player.hp = Math.min(CONFIG.playerMaxHp, player.hp + CONFIG.healAmount);
-  beep(523, 0.15, 'sine', 0.14); beep(784, 0.2, 'sine', 0.12, 0.1);
-  spawnFloater(`+${CONFIG.healAmount}`, player.pos, '#7dff9a');
+  player.hp = Math.min(player.maxHp, player.hp + CONFIG.healAmount);
+  spawnFloater(`+${CONFIG.healAmount} HP`, sqPos(player.r, player.c), '#7dff9a');
+  sfx.pickup();
+  updateHUD();
 }
-function trySoulDash() {
-  if (!STATE.soulDash) { showToast('Chưa có Soul — giết một quân địch để nhặt Soul!'); return; }
-  const type = STATE.soulDash.type;
-  STATE.soulDash = null;
-  const fwd = playerForward();
-  const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
-  let dest = player.pos.clone();
-  // Each Soul dashes in its piece's movement pattern — the whole point of
-  // the system (and the real-time replacement for the old 1-use card).
-  if (type === 'knight') dest.addScaledVector(fwd, 4).addScaledVector(right, 2.5); // L-blink
-  else if (type === 'bishop') dest.addScaledVector(fwd, 3.5).addScaledVector(right, 3.5); // diagonal
-  else dest.addScaledVector(fwd, CONFIG.soulDashDistance); // rook straight / queen omni / pawn forward
-  dest.x = THREE.MathUtils.clamp(dest.x, -BOARD_HALF + 0.6, BOARD_HALF - 0.6);
-  dest.z = THREE.MathUtils.clamp(dest.z, -BOARD_HALF + 0.6, BOARD_HALF - 0.6);
-  // Damage anything passed through on the way (point-to-segment distance).
-  const segDir = dest.clone().sub(player.pos);
-  const segLenSq = Math.max(segDir.lengthSq(), 0.0001);
-  for (const e of enemies) {
-    if (e.dead) continue;
-    const t = THREE.MathUtils.clamp(
-      e.group.position.clone().sub(player.pos).dot(segDir) / segLenSq, 0, 1);
-    const closest = player.pos.clone().addScaledVector(segDir, t);
-    if (e.group.position.distanceTo(closest) < 1.2) {
-      damageEnemy(e, CONFIG.soulDashDamage, { color: '#b78cff' });
-    }
-  }
-  player.pos.copy(dest);
-  player.iframeTimer = Math.max(player.iframeTimer, 0.3);
-  beep(990, 0.12, 'sine', 0.12);
-  tutorialMark('souldash');
-}
-function damagePlayer(dmg, sourcePos) {
-  if (player.iframeTimer > 0 || player.rollTimer > 0 || player.dead || STATE.phase !== 'playing') return;
-  // Timed parry: an attack landing inside the parry window stuns the
-  // attacker instead of hurting the player.
-  if (player.parryTimer > 0) {
-    // Find the nearest attacking enemy and stun it.
-    let best = null, bestD = 1e9;
-    for (const e of enemies) {
-      if (e.dead || (e.state !== 'attack' && e.state !== 'windup')) continue;
-      const d = e.group.position.distanceTo(player.pos);
-      if (d < bestD) { bestD = d; best = e; }
-    }
-    if (best) {
-      best.state = 'stunned'; best.stateT = CONFIG.parryStun; releaseToken(best);
-      STATE.souls += CONFIG.parrySouls;
-      sfx.parry();
-      spawnFloater('PARRY!', player.pos, '#7db8ff');
-      showToast(`Parry thành công! +${CONFIG.parrySouls} Souls`);
-      tutorialMark('parry');
-      return;
-    }
-  }
-  if (player.blockHeld && player.stamina > 5) {
-    // Blocking: 70% reduced damage, drains stamina.
-    dmg *= 0.3;
-    player.stamina = Math.max(0, player.stamina - 12);
-    beep(200, 0.08, 'square', 0.1);
+function useCard(type) {
+  if (STATE.phase !== 'playing' || STATE.turnState !== 'player') { showToast('Chỉ dùng thẻ trong lượt của mình.'); return; }
+  if (!player.hand[type] || player.hand[type] <= 0) return;
+  if (player.cardUsedThisSegment) { showToast('Lượt này đã dùng 1 thẻ rồi — thẻ chỉ dùng trong lượt hiện tại.'); return; }
+  player.hand[type]--;
+  player.cardUsedThisSegment = true;
+  if (type === 'pawn') {
+    // Pawn card: the pawn's own movement is no upgrade — grant +1 action.
+    player.actions++;
+    showToast('Dùng thẻ Tốt: +1 hành động trong lượt này!');
   } else {
-    sfx.hurt();
+    player.cardForm = type;
+    showToast(`Dùng thẻ ${PIECE_NAME[type]}: lượt này di chuyển như ${PIECE_NAME[type]}!`);
   }
+  sfx.pickup();
+  renderCards();
+  refreshHighlights();
+  updateHUD();
+}
+const PIECE_NAME = { pawn: 'Tốt', knight: 'Mã', bishop: 'Tượng', rook: 'Xe', queen: 'Hậu', assassin: 'Sát thủ' };
+
+// ---------------------------------------------------------------------------
+// Promotion ("phong vương") — attack the square 3 times, then MOVE into it.
+// ---------------------------------------------------------------------------
+function checkPromotionStep() {
+  const p = STATE.promo;
+  if (!p || !p.unlocked) return;
+  if (player.r === p.r && player.c === p.c) {
+    // No auto-promotion: the player must CHOOSE a form.
+    STATE.phase = 'promoteChoice';
+    showScreen('promote');
+    sfx.promotion();
+  }
+}
+function choosePromotionForm(form) {
+  player.form = form;
+  setPlayerPiece(form);
+  showScreen(null);
+  STATE.phase = 'playing';
+  showBanner(`PHONG VƯƠNG — HÓA THÀNH ${PIECE_NAME[form].toUpperCase()}!`);
+  showToast(`Giờ bạn di chuyển và tấn công như ${PIECE_NAME[form]} — chỉ trong wave này.`);
+  STATE.promo = null; // square consumed
+  refreshHighlights();
+  updateHUD();
+  if (STATE.pendingAdvance) { STATE.pendingAdvance = false; endPlayerSegment(); }
+}
+
+// ---------------------------------------------------------------------------
+// Damage to the player / death / revive
+// ---------------------------------------------------------------------------
+function damagePlayer(dmg, sourcePos) {
+  if (player.dead || STATE.phase !== 'playing') return;
   player.hp -= dmg;
+  spawnFloater(`-${dmg}`, sqPos(player.r, player.c), '#ff5544');
   vignette.style.boxShadow = 'inset 0 0 120px 40px rgba(192,57,43,.55)';
-  setTimeout(() => { vignette.style.boxShadow = 'inset 0 0 120px 40px rgba(192,57,43,0)'; }, 180);
-  spawnFloater(`-${Math.round(dmg)}`, player.pos, '#ff5544');
-  if (player.hp <= 0) { player.hp = 0; onPlayerDeath(); }
-}
-
-// ---------------------------------------------------------------------------
-// Enemy AI — one small state machine per enemy, gated by the token rule.
-// ---------------------------------------------------------------------------
-function updateEnemy(e, dt) {
-  if (e.dead) return;
-  e.cooldown -= dt;
-  e.flashT = Math.max(0, e.flashT - dt);
-  // QA 2026-11-06: the old code allocated a NEW material every frame
-  // while flashing (a slow memory leak in long fights). One shared
-  // material now; assignment itself is cheap.
-  e.group.children[0].material = e.flashT > 0 ? flashMat : blackMat;
-  const toPlayer = player.pos.clone().sub(e.group.position); toPlayer.y = 0;
-  const dist = toPlayer.length();
-  const dir = dist > 0.01 ? toPlayer.clone().normalize() : new THREE.Vector3(0, 0, 1);
-  // Face the player (except while jumping).
-  if (e.state !== 'jumping') e.group.rotation.y = Math.atan2(dir.x, dir.z);
-
-  switch (e.state) {
-    case 'stunned':
-      e.stateT -= dt;
-      if (e.stateT <= 0) { e.state = 'approach'; e.cooldown = 1; }
-      break;
-
-    case 'approach': {
-      // Queen has her own attack script (AoE + lines), handled below.
-      if (e.type === 'queen') { updateQueen(e, dt, dist, dir); break; }
-      // If in range and off cooldown, try to take an attack token.
-      if (dist < e.cfg.range && e.cooldown <= 0) {
-        if (acquireToken(e)) {
-          e.state = 'windup'; e.stateT = e.cfg.windup;
-          startWindup(e, dist, dir);
-        } else {
-          e.state = 'circling'; e.stateT = 0.8 + Math.random() * 0.8;
-        }
-      } else {
-        // Walk toward the player, but stop at a polite distance and circle
-        // if another enemy is already attacking (token rule in action).
-        const stopDist = e.type === 'bishop' || e.type === 'rook' ? 5.5 : 1.7;
-        if (dist > stopDist) {
-          e.group.position.addScaledVector(dir, e.cfg.speed * dt);
-        } else {
-          e.state = 'circling'; e.stateT = 0.6;
-        }
-        clampToBoard(e.group.position);
-      }
-      break;
-    }
-
-    case 'circling': {
-      e.stateT -= dt;
-      // Strafe around the player while waiting for a token.
-      const tangent = new THREE.Vector3(-dir.z, 0, dir.x);
-      e.group.position.addScaledVector(tangent, e.cfg.speed * 0.6 * dt);
-      if (dist < 1.4) e.group.position.addScaledVector(dir.clone().negate(), e.cfg.speed * dt);
-      clampToBoard(e.group.position);
-      if (e.stateT <= 0) e.state = 'approach';
-      break;
-    }
-
-    case 'windup': {
-      e.stateT -= dt;
-      // Telegraph pulse: bob the piece so the wind-up reads clearly.
-      e.group.position.y = 0.1 + 0.1 * Math.sin(e.stateT * 20);
-      if (e.stateT <= 0) {
-        e.group.position.y = 0;
-        e.state = 'attack'; e.stateT = 0.25;
-        executeAttack(e, dist, dir);
-      }
-      break;
-    }
-
-    case 'attack': {
-      e.stateT -= dt;
-      if (e.stateT <= 0) {
-        releaseToken(e);
-        e.state = 'recover'; e.stateT = 0.6;
-      }
-      break;
-    }
-
-    case 'recover': {
-      e.stateT -= dt;
-      if (e.stateT <= 0) { e.state = 'approach'; e.cooldown = CONFIG.enemyAttackCooldown; }
-      break;
-    }
-
-    case 'jumping': {
-      // Knight / Assassin L-jump: parabolic arc from jumpFrom to jumpTo.
-      e.stateT -= dt;
-      const t = THREE.MathUtils.clamp(1 - e.stateT / 0.45, 0, 1);
-      e.group.position.lerpVectors(e.jumpFrom, e.jumpTo, t);
-      e.group.position.y = Math.sin(t * Math.PI) * 2.2;
-      if (t >= 1) {
-        e.group.position.y = 0;
-        releaseToken(e);
-        if (e.group.position.distanceTo(player.pos) < 1.9) damagePlayer(e.cfg.dmg, e.group.position);
-        e.state = 'recover'; e.stateT = 0.7;
-        e.cooldown = CONFIG.enemyAttackCooldown;
-      }
-      break;
-    }
-  }
-}
-function clampToBoard(v) {
-  v.x = THREE.MathUtils.clamp(v.x, -BOARD_HALF + 0.6, BOARD_HALF - 0.6);
-  v.z = THREE.MathUtils.clamp(v.z, -BOARD_HALF + 0.6, BOARD_HALF - 0.6);
-}
-function startWindup(e, dist, dir) {
-  // Per-type telegraph, shown during the wind-up so the player can react.
-  if (e.type === 'pawn') {
-    addTelegraph('circle', player.pos.clone(), { radius: 1.6, life: e.cfg.windup, color: 0x4488ff }); // blue = parryable
-  } else if (e.type === 'bishop') {
-    addTelegraph('circle', player.pos.clone(), { radius: 1.4, life: e.cfg.windup, color: 0xff2211 });
-  } else if (e.type === 'rook') {
-    // Glowing red line along the rook's charge line (~1s warning).
-    const lineDir = Math.abs(dir.x) > Math.abs(dir.z)
-      ? new THREE.Vector3(Math.sign(dir.x), 0, 0) : new THREE.Vector3(0, 0, Math.sign(dir.z));
-    e.targetPos.copy(lineDir);
-    const mid = e.group.position.clone().addScaledVector(lineDir, 4);
-    addTelegraph('line', mid, { width: 1.4, length: 8, life: e.cfg.windup,
-      angle: lineDir.x !== 0 ? Math.PI / 2 : 0 });
-  } else if (e.type === 'knight' || e.type === 'assassin') {
-    // L-landing marker: where the jump will land (near the player).
-    const land = player.pos.clone().add(new THREE.Vector3(dir.x * 0.5, 0, dir.z * 0.5));
-    e.jumpTo.copy(land); e.jumpFrom.copy(e.group.position);
-    addTelegraph('tile', land, { life: e.cfg.windup, color: e.type === 'assassin' ? 0xff2211 : 0x4488ff });
-  }
-}
-function executeAttack(e, dist, dir) {
-  if (e.type === 'queen') {
-    // Queen melee slash at the end of her wind-up.
-    if (player.pos.distanceTo(e.group.position) < 2.6) damagePlayer(e.cfg.dmg, e.group.position);
-    return;
-  }
-  if (e.type === 'pawn') {
-    if (player.pos.distanceTo(e.group.position) < 2.1) damagePlayer(e.cfg.dmg, e.group.position);
-  } else if (e.type === 'bishop') {
-    // Diagonal projectile toward the player's position at fire time.
-    const to = player.pos.clone().sub(e.group.position).setY(0).normalize();
-    spawnProjectile(e.group.position, to, 8, e.cfg.dmg, true);
-  } else if (e.type === 'rook') {
-    // Straight-line charge along the telegraphed line.
-    const lineDir = e.targetPos;
-    const from = e.group.position.clone();
-    e.group.position.addScaledVector(lineDir, 5);
-    clampToBoard(e.group.position);
-    // QA 2026-11-06: the old code only checked the END position, so the
-    // rook could charge straight through the player without hitting.
-    // Check the whole charge segment (same point-to-segment math as the
-    // Soul-dash) so standing on the telegraphed line actually hurts.
-    const seg = e.group.position.clone().sub(from);
-    const segLenSq = Math.max(seg.lengthSq(), 0.0001);
-    const t = THREE.MathUtils.clamp(
-      player.pos.clone().sub(from).dot(seg) / segLenSq, 0, 1);
-    const closest = from.clone().addScaledVector(seg, t);
-    if (player.pos.distanceTo(closest) < 1.8) damagePlayer(e.cfg.dmg, e.group.position);
-    // Leave a fading line behind the charge.
-    addTelegraph('line', e.group.position.clone(), { width: 1.4, length: 5, life: 0.4,
-      angle: lineDir.x !== 0 ? Math.PI / 2 : 0, sound: false });
-  } else if (e.type === 'knight' || e.type === 'assassin') {
-    e.state = 'jumping'; e.stateT = 0.45; // token released on landing
-    return;
-  }
-}
-function updateQueen(e, dt, dist, dir) {
-  // Queen boss script: melee when close, AoE circles + line attacks at
-  // range, sword rain from above below 50% HP. She does NOT use the token
-  // system — she IS the fight — but her adds (none in this demo) would.
-  e.aoeTimer -= dt; e.summonTimer -= dt;
-  const enraged = e.hp < e.maxHp * 0.5;
-  if (dist < e.cfg.range && e.cooldown <= 0) {
-    e.state = 'windup'; e.stateT = e.cfg.windup;
-    addTelegraph('circle', player.pos.clone(), { radius: 2.2, life: e.cfg.windup, color: 0xff2211 });
-    return;
-  }
-  if (e.aoeTimer <= 0) {
-    e.aoeTimer = enraged ? 3.2 : 4.5;
-    // Ground AoE: red circle fills ~1.5s, then explodes.
-    const c = player.pos.clone();
-    addTelegraph('circle', c, {
-      radius: CONFIG.queenAoeRadius, life: CONFIG.queenAoeDelay, color: 0xff2211,
-      onDone: () => {
-        if (STATE.phase !== 'playing') return;
-        shatter(c.clone().setY(0), 0xff4422);
-        beep(90, 0.3, 'sawtooth', 0.18);
-        if (player.pos.distanceTo(c) < CONFIG.queenAoeRadius) damagePlayer(CONFIG.queenAoeDamage, c);
-      },
-    });
-    // Extra circles when enraged.
-    if (enraged) {
-      const c2 = player.pos.clone().add(new THREE.Vector3(2.5, 0, 0));
-      addTelegraph('circle', c2, {
-        radius: CONFIG.queenAoeRadius, life: CONFIG.queenAoeDelay, color: 0xff2211, sound: false,
-        onDone: () => {
-          if (STATE.phase !== 'playing') return;
-          if (player.pos.distanceTo(c2) < CONFIG.queenAoeRadius) damagePlayer(CONFIG.queenAoeDamage, c2);
-        },
-      });
-    }
-    return;
-  }
-  if (e.summonTimer <= 0 && enraged) {
-    // "Summons swords from above": falling swords that explode on impact.
-    e.summonTimer = 7;
-    for (let i = 0; i < CONFIG.queenSwordRainCount; i++) {
-      const p = player.pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 7, 0, (Math.random() - 0.5) * 7));
-      addTelegraph('tile', p, {
-        life: 1.0, color: 0xff8800, sound: i === 0,
-        onDone: () => {
-          if (STATE.phase !== 'playing') return;
-          shatter(p.clone().setY(0), 0xffaa33);
-          if (player.pos.distanceTo(p) < 1.3) damagePlayer(15, p);
-        },
-      });
-    }
-    return;
-  }
-  if (dist > 2.4) {
-    e.group.position.addScaledVector(dir, e.cfg.speed * dt);
-    clampToBoard(e.group.position);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Waves, promotion, death / respawn
-// ---------------------------------------------------------------------------
-function startWave(i) {
-  STATE.waveIndex = i;
-  const w = CONFIG.waves[i];
-  // Clear leftovers.
-  for (const e of enemies) { if (!e.dead) { scene.remove(e.group); releaseToken(e); } }
-  enemies.length = 0;
-  STATE.tokensInUse = 0;
-  promoActive = false;
-  STATE.waveCleared = false;
-  promoTile.material.opacity = 0;
-  player.heals = CONFIG.healsPerWave;
-  player.pos.set(0, 0, 5);
-  player.group.position.copy(player.pos);
-  player.hp = CONFIG.playerMaxHp;
-  player.stamina = CONFIG.staminaMax;
-  w.spawn.forEach((t, idx) => createEnemy(t, spawnPosFor(idx, w.spawn.length)));
-  waveEl.textContent = w.name;
-  bossWrap.classList.toggle('hidden', i !== CONFIG.waves.length - 1);
-  showBanner(w.name);
-  sfx.wave();
-}
-function checkWaveClear() {
-  if (STATE.phase !== 'playing' || STATE.queenDefeated || STATE.waveCleared) return;
-  // Note: dead enemies are spliced out of `enemies` in the main loop, so an
-  // empty array IS the cleared state — do not test every(dead) here.
-  if (enemies.length === 0) {
-    STATE.waveCleared = true;
-    if (STATE.waveIndex >= CONFIG.waves.length - 1) return; // Queen handled by choice
-    // Promotion: a glowing tile lights up on the far rank.
-    promoActive = true;
-    promoTile.material.opacity = 0.85;
-    showBanner('PHONG VƯƠNG — BƯỚC LÊN Ô VÀNG!');
-    showToast('Bước lên ô vàng ở cuối bàn cờ để hồi máu + tăng dame wave sau.');
-    sfx.promotion();
-  }
-}
-function checkPromotion() {
-  if (!promoActive) return;
-  if (player.pos.distanceTo(new THREE.Vector3(0, 0, -7)) < 1.4) {
-    promoActive = false;
-    promoTile.material.opacity = 0;
-    player.hp = CONFIG.playerMaxHp;
-    STATE.damageBuff = CONFIG.playerDamageBuff;
-    showToast(`Phong vương! Dame x${CONFIG.playerDamageBuff} cho wave sau.`);
-    sfx.promotion();
-    setTimeout(() => { if (STATE.phase === 'playing') startWave(STATE.waveIndex + 1); }, 1200);
-  }
+  setTimeout(() => { vignette.style.boxShadow = 'inset 0 0 120px 40px rgba(192,57,43,0)'; }, 250);
+  sfx.hurt();
+  updateHUD();
+  if (player.hp <= 0) onPlayerDeath();
 }
 function onPlayerDeath() {
-  player.dead = true;
-  shatter(player.pos, 0xf2ead8);
-  // Unspent Souls drop where you died; walk over them to recover.
-  if (STATE.souls > 0) {
-    droppedSouls = { pos: player.pos.clone(), amount: STATE.souls, mesh: null };
-    const m = new THREE.Mesh(new THREE.SphereGeometry(0.35, 12, 10),
-      new THREE.MeshBasicMaterial({ color: 0x9b8cff }));
-    m.position.copy(droppedSouls.pos).setY(0.6);
-    scene.add(m);
-    droppedSouls.mesh = m;
-    STATE.souls = 0;
+  if (player.revives > 0) {
+    player.revives--;
+    player.hp = player.maxHp;
+    player.r = START_SQ.r; player.c = START_SQ.c;
+    player.group.position.copy(sqPos(player.r, player.c));
+    showBanner('HỒI SINH!');
+    showToast('Hồi sinh đã cứu bạn một lần — quay lại ô xuất phát!');
+    sfx.promotion();
+    updateHUD();
+    return;
   }
+  player.dead = true;
+  shatter(sqPos(player.r, player.c), 0xf2ead8);
+  player.group.visible = false;
   sfx.die();
-  setTimeout(() => {
-    if (STATE.phase !== 'playing') return;
-    showScreen('lose');
-    STATE.phase = 'lose';
-    document.exitPointerLock?.();
-  }, 900);
+  STATE.phase = 'lose';
+  STATE.turnState = 'idle';
+  hideAllHl();
+  showScreen('lose');
 }
 function retryWave() {
-  // Respawn at the start of the current wave; enemies reset.
   player.dead = false;
-  player.hp = CONFIG.playerMaxHp;
-  player.stamina = CONFIG.staminaMax;
-  player.iframeTimer = 1;
+  player.group.visible = true;
+  player.hp = player.maxHp;
+  player.r = START_SQ.r; player.c = START_SQ.c;
+  player.group.position.copy(sqPos(player.r, player.c));
   showScreen(null);
-  hud.classList.remove('hidden');
   STATE.phase = 'playing';
   startWave(STATE.waveIndex);
-  lockPointer();
 }
 function fullRestart() {
-  STATE.time = 0; STATE.kills = 0; STATE.souls = 0; STATE.soulDash = null;
-  STATE.damageBuff = 1; STATE.queenDefeated = false; STATE.tokensInUse = 0;
-  player.dead = false; player.hp = CONFIG.playerMaxHp; player.stamina = CONFIG.staminaMax;
-  if (droppedSouls?.mesh) { scene.remove(droppedSouls.mesh); droppedSouls = null; }
-  for (const p of [...projectiles]) { scene.remove(p.mesh); }
-  projectiles.length = 0;
-  for (const t of [...telegraphs]) { scene.remove(t.mesh); }
-  telegraphs.length = 0;
+  STATE.gold = 0; STATE.kills = 0; STATE.warningsLeft = CONFIG.warningsPerWave;
+  STATE.queenDefeated = false; STATE.queenAoe = null;
+  player.maxHp = CONFIG.playerMaxHp; player.hp = CONFIG.playerMaxHp;
+  player.revives = 0; player.damageBonus = 0; player.hasGun = false;
+  player.form = null; player.cardForm = null;
+  player.hand = { pawn: 0, knight: 0, bishop: 0, rook: 0, queen: 0 };
+  player.dead = false; player.group.visible = true;
+  setPlayerPiece('pawn');
   showScreen(null);
-  hud.classList.remove('hidden');
   STATE.phase = 'playing';
   startWave(0);
-  lockPointer();
 }
 
 // ---------------------------------------------------------------------------
-// Tutorial prompts (in order, checked off as the player does each action)
+// Enemy AI — one enemy acts at a time, on its own turn segment.
+// Before it acts, its intended square stays red for enemyIntentDelay so
+// the player can read the board (this replaces real-time telegraphs).
 // ---------------------------------------------------------------------------
-const tutorialSteps = [
-  { id: 'move', label: 'Di chuyển bằng W A S D' },
-  { id: 'attack', label: 'Chém bằng chuột trái — xoay camera để địch nằm trên ĐƯỜNG CHÉO, không chém thẳng' },
-  { id: 'dodge', label: 'Né lăn bằng Space (bất tử thoáng chốc)' },
-  { id: 'parry', label: 'Parry bằng chuột phải đúng lúc địch đánh tới' },
-  { id: 'souldash', label: 'Giết địch để nhặt Soul, rồi nhấn F để Soul-dash' },
+function enemyAttackSquares(e) {
+  // Squares this enemy could capture onto from its square (chess rules).
+  if (e.type === 'pawn') {
+    return [{ r: e.r + 1, c: e.c - 1 }, { r: e.r + 1, c: e.c + 1 }].filter((s) => inBoard(s.r, s.c));
+  }
+  if (e.type === 'knight' || e.type === 'assassin') {
+    return KNIGHT_JUMPS.map(([dr, dc]) => ({ r: e.r + dr, c: e.c + dc })).filter((s) => inBoard(s.r, s.c));
+  }
+  const dirs = e.type === 'bishop' ? DIRS_DIAG : e.type === 'rook' ? DIRS_ORTHO : DIRS_ALL;
+  const out = [];
+  for (const [dr, dc] of dirs) {
+    let nr = e.r + dr, nc = e.c + dc;
+    while (inBoard(nr, nc)) { out.push({ r: nr, c: nc }); if (occupantAt(nr, nc)) break; nr += dr; nc += dc; }
+  }
+  return out;
+}
+function distToPlayer(e) { return Math.abs(e.r - player.r) + Math.abs(e.c - player.c); }
+function planEnemyMove(e) {
+  // Returns {kind:'attack'|'move'|'wait', to:{r,c}}.
+  // 1) If the player is on an attack square -> capture (move onto them).
+  const atk = enemyAttackSquares(e);
+  if (atk.some((s) => s.r === player.r && s.c === player.c)) {
+    return { kind: 'attack', to: { r: player.r, c: player.c } };
+  }
+  // 2) Queen: AoE / line behaviour is handled in planQueenMove.
+  // 3) Otherwise move toward the player along the piece's own rules.
+  if (e.type === 'pawn') {
+    const nr = e.r + 1, nc = e.c;
+    if (inBoard(nr, nc) && isEmpty(nr, nc)) return { kind: 'move', to: { r: nr, c: nc } };
+    return { kind: 'wait' };
+  }
+  if (e.type === 'knight' || e.type === 'assassin') {
+    const steps = e.type === 'assassin' ? 2 : 1; // assassin dashes: 2 L-jumps per turn
+    let r = e.r, c = e.c, moved = false;
+    for (let i = 0; i < steps; i++) {
+      let best = null, bestD = Math.abs(r - player.r) + Math.abs(c - player.c);
+      for (const [dr, dc] of KNIGHT_JUMPS) {
+        const nr = r + dr, nc = c + dc;
+        if (!inBoard(nr, nc)) continue;
+        if (nr === player.r && nc === player.c) { best = { r: nr, c: nc }; break; }
+        if (occupantAt(nr, nc)) continue;
+        const d = Math.abs(nr - player.r) + Math.abs(nc - player.c);
+        if (d < bestD) { bestD = d; best = { r: nr, c: nc }; }
+      }
+      if (!best) break;
+      r = best.r; c = best.c; moved = true;
+      if (r === player.r && c === player.c) return { kind: 'attack', to: { r, c } };
+    }
+    return moved ? { kind: 'move', to: { r, c } } : { kind: 'wait' };
+  }
+  // Bishop / Rook / Queen (non-AoE part): slide toward the player.
+  const dirs = e.type === 'bishop' ? DIRS_DIAG : e.type === 'rook' ? DIRS_ORTHO : DIRS_ALL;
+  let best = null, bestD = distToPlayer(e);
+  for (const [dr, dc] of dirs) {
+    let nr = e.r + dr, nc = e.c + dc;
+    while (inBoard(nr, nc)) {
+      if (nr === player.r && nc === player.c) return { kind: 'attack', to: { r: nr, c: nc } };
+      if (occupantAt(nr, nc)) break;
+      const d = Math.abs(nr - player.r) + Math.abs(nc - player.c);
+      if (d < bestD) { bestD = d; best = { r: nr, c: nc }; }
+      nr += dr; nc += dc;
+    }
+  }
+  return best ? { kind: 'move', to: best } : { kind: 'wait' };
+}
+function planQueenMove(e) {
+  // The Queen's AoE (3x3 around the player) is telegraphed ONE TURN ahead:
+  // she marks it on her turn, it resolves at the START of her next turn,
+  // so the player gets a whole player segment to step out of the red.
+  if (STATE.queenAoe) {
+    return { kind: 'resolveAoe', to: null };
+  }
+  const cheb = Math.max(Math.abs(e.r - player.r), Math.abs(e.c - player.c));
+  if (cheb <= 1) {
+    return { kind: 'attack', to: { r: player.r, c: player.c } }; // adjacent melee
+  }
+  // Line attack: same row / column / diagonal, within range, path clear.
+  const aligned = (e.r === player.r || e.c === player.c || Math.abs(e.r - player.r) === Math.abs(e.c - player.c))
+    && distToPlayer(e) <= CONFIG.queenLineRange;
+  if (aligned) {
+    const dr = Math.sign(player.r - e.r), dc = Math.sign(player.c - e.c);
+    let blocked = false, nr = e.r + dr, nc = e.c + dc;
+    while (nr !== player.r || nc !== player.c) {
+      if (occupantAt(nr, nc)) { blocked = true; break; }
+      nr += dr; nc += dc;
+    }
+    if (!blocked) return { kind: 'lineAttack', to: { r: player.r, c: player.c } };
+  }
+  if (cheb <= 2) {
+    // Close in: mark a 3x3 AoE around the player's current square.
+    const squares = [];
+    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+      const nr = player.r + dr, nc = player.c + dc;
+      if (inBoard(nr, nc)) squares.push({ r: nr, c: nc });
+    }
+    return { kind: 'markAoe', to: null, squares };
+  }
+  return planEnemyMove(e); // otherwise slide toward the player (queen lines)
+}
+function executeEnemyPlan(e, plan) {
+  if (!plan || plan.kind === 'wait') return;
+  if (plan.kind === 'markAoe') {
+    STATE.queenAoe = { squares: plan.squares };
+    plan.squares.forEach((sq, i) => { if (i < hlDanger.length) placeHl(hlDanger[i], sq.r, sq.c); });
+    showToast('⚠ HẬU ĐANG TỤ LỰC — vùng đỏ 3x3 sẽ nổ ở lượt sau của Hậu! Hãy đi ra khỏi vùng đỏ!', 3400);
+    sfx.warn();
+    return;
+  }
+  if (plan.kind === 'resolveAoe') {
+    const hit = STATE.queenAoe.squares.some((s) => s.r === player.r && s.c === player.c);
+    for (const sq of STATE.queenAoe.squares) {
+      shatter(sqPos(sq.r, sq.c), 0xcc2211);
+    }
+    STATE.queenAoe = null;
+    hideAllHl();
+    if (hit) { showToast('Hậu nổ AoE trúng bạn!'); damagePlayer(1, sqPos(e.r, e.c)); }
+    else showToast('Bạn đã thoát khỏi vùng AoE của Hậu!');
+    return;
+  }
+  if (plan.kind === 'lineAttack') {
+    // The beam hits only the player's square, telegraphed by the red tile.
+    showToast('Hậu bắn đòn theo hàng!');
+    damagePlayer(1, sqPos(e.r, e.c));
+    return;
+  }
+  if (plan.kind === 'attack') {
+    // Capture: the enemy moves onto the player's square and deals 1 damage.
+    e.r = plan.to.r; e.c = plan.to.c; syncPiecePos(e);
+    damagePlayer(e.cfg.dmg, sqPos(e.r, e.c));
+    return;
+  }
+  if (plan.kind === 'move') {
+    e.r = plan.to.r; e.c = plan.to.c; syncPiecePos(e);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Turn engine — INTERLEAVED turns (the user's solution to 1-life vs 5-HP):
+// enemy 1 acts, then the player acts, then enemy 2 acts, then the player
+// acts... NOT all enemies before the player. The queue is rebuilt each
+// round from the living enemies.
+// ---------------------------------------------------------------------------
+function buildTurnQueue() {
+  const q = [];
+  for (const e of enemies) {
+    if (e.dead) continue;
+    q.push({ kind: 'enemy', enemy: e });
+    q.push({ kind: 'player' });
+  }
+  if (q.length === 0) q.push({ kind: 'player' });
+  STATE.turnQueue = q;
+}
+function beginPlayerSegment() {
+  STATE.turnState = 'player';
+  STATE.turnCount++;
+  player.actions = CONFIG.actionsPerTurn;
+  player.cardForm = null;      // a card's movement lasts ONE player segment only
+  player.cardUsedThisSegment = false;
+  updateHUD();
+  refreshHighlights();
+}
+function endPlayerSegment() {
+  if (STATE.turnState !== 'player') return;
+  hideAllHl();
+  advanceTurn();
+}
+function advanceTurn() {
+  if (STATE.phase !== 'playing') return;
+  // Queen AoE pending? It stays marked across the player's segment and
+  // resolves at the start of the Queen's next segment (see planQueenMove).
+  const next = STATE.turnQueue.shift();
+  if (!next) {
+    // Round over: rebuild the interleaved queue for the next round.
+    if (enemies.length === 0) { checkWaveClear(); return; }
+    buildTurnQueue();
+    advanceTurn();
+    return;
+  }
+  if (next.kind === 'player') { beginPlayerSegment(); return; }
+  const e = next.enemy;
+  if (!e || e.dead) { advanceTurn(); return; } // skip the dead, don't stall
+  // Enemy segment: show intent first, then act.
+  const plan = e.type === 'queen' ? planQueenMove(e) : planEnemyMove(e);
+  STATE.currentEnemy = e;
+  STATE.currentIntent = plan;
+  STATE.turnState = 'enemyIntent';
+  STATE.turnTimer = CONFIG.enemyIntentDelay;
+  // Highlight the intended square red so the player can read the board.
+  hideAllHl();
+  if (plan && plan.to) {
+    placeHl(hlDanger[0], plan.to.r, plan.to.c);
+    if (plan.kind === 'attack' || plan.kind === 'lineAttack') sfx.warn();
+  }
+  if (plan && plan.kind === 'markAoe') {
+    plan.squares.forEach((sq, i) => { if (i < hlDanger.length) placeHl(hlDanger[i], sq.r, sq.c); });
+  }
+  updateHUD();
+}
+function updateTurnEngine(dt) {
+  if (STATE.phase !== 'playing') return;
+  if (STATE.turnState === 'enemyIntent') {
+    STATE.turnTimer -= dt;
+    if (STATE.turnTimer <= 0) {
+      const e = STATE.currentEnemy, plan = STATE.currentIntent;
+      STATE.turnState = 'enemyAct';
+      STATE.turnTimer = CONFIG.enemyActDelay;
+      hideAllHl();
+      executeEnemyPlan(e, plan);
+      STATE.currentEnemy = null; STATE.currentIntent = null;
+      updateHUD();
+      if (STATE.phase !== 'playing') return; // player may have died
+    }
+  } else if (STATE.turnState === 'enemyAct') {
+    STATE.turnTimer -= dt;
+    if (STATE.turnTimer <= 0) { STATE.turnState = 'busy'; advanceTurn(); }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Waves, shop, Queen defeat, win/lose
+// ---------------------------------------------------------------------------
+const WAVES = [
+  { name: 'WAVE 1 — TỐT + MÃ', spawn: [['pawn', 1, 1], ['pawn', 1, 5], ['knight', 0, 3]] },
+  { name: 'WAVE 2 — MÃ + TƯỢNG', spawn: [['knight', 0, 1], ['bishop', 0, 5], ['pawn', 1, 3], ['pawn', 1, 6]] },
+  { name: 'WAVE 3 — XE + SÁT THỦ', spawn: [['rook', 0, 0], ['bishop', 0, 6], ['assassin', 1, 3]] },
+  { name: 'BOSS — THE QUEEN', spawn: [['queen', 0, 3]] },
 ];
-const tutorialDone = new Set();
-function renderTutorial() {
-  tutorialEl.innerHTML = '<b>NHIỆM VỤ MỚI:</b><br>' +
-    tutorialSteps.map((s) => `<div class="${tutorialDone.has(s.id) ? 'done' : ''}">${tutorialDone.has(s.id) ? '☑' : '☐'} ${s.label}</div>`).join('');
+function clearEnemies() {
+  for (const e of enemies) { scene.remove(e.group); }
+  enemies.length = 0;
 }
-function tutorialMark(id) {
-  if (tutorialDone.has(id)) return;
-  tutorialDone.add(id);
-  renderTutorial();
+function createEnemy(type, r, c) {
+  const cfg = CONFIG.enemies[type];
+  const group = new THREE.Group();
+  group.add(makePieceMesh(type, false));
+  const eye = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 8), redEyeMat);
+  eye.position.set(0, 1.25, 0.42); group.add(eye);
+  group.position.copy(sqPos(r, c));
+  scene.add(group);
+  const e = { type, r, c, hp: cfg.hp, maxHp: cfg.hp, cfg, group, dead: false, flashT: 0 };
+  enemies.push(e);
+  return e;
 }
+function pickPromoSquare() {
+  // A random square on the enemy side (rows 0-1), not occupied.
+  for (let tries = 0; tries < 50; tries++) {
+    const r = Math.floor(Math.random() * 2);
+    const c = Math.floor(Math.random() * 8);
+    if (!occupantAt(r, c)) return { r, c, hits: 0, unlocked: false };
+  }
+  return { r: 0, c: 0, hits: 0, unlocked: false };
+}
+function startWave(i) {
+  STATE.waveIndex = i;
+  const w = WAVES[i];
+  clearEnemies();
+  hideAllHl();
+  STATE.promo = null;
+  STATE.queenAoe = null;
+  STATE.warningsLeft = CONFIG.warningsPerWave;
+  STATE.warningsExhaustedShown = false;
+  player.heals = CONFIG.healsPerWave;
+  player.form = null; player.cardForm = null;
+  setPlayerPiece('pawn');
+  player.r = START_SQ.r; player.c = START_SQ.c;
+  player.group.position.copy(sqPos(player.r, player.c));
+  player.group.visible = true;
+  player.dead = false;
+  player.hp = player.maxHp;
+  for (const [type, r, c] of w.spawn) createEnemy(type, r, c);
+  if (i < WAVES.length - 1) STATE.promo = pickPromoSquare();
+  waveEl.textContent = w.name;
+  bossWrap.classList.toggle('hidden', i !== WAVES.length - 1);
+  showBanner(w.name);
+  sfx.wave();
+  buildTurnQueue();
+  STATE.phase = 'playing';
+  advanceTurn();
+  updateHUD();
+  refreshHighlights();
+}
+function checkWaveClear() {
+  if (STATE.phase !== 'playing' || STATE.queenDefeated) return;
+  if (enemies.some((e) => !e.dead)) return;
+  // All enemies dead. Remove the corpses from the list (they were already
+  // removed from the scene in killEnemy; splice them out here).
+  for (let i = enemies.length - 1; i >= 0; i--) if (enemies[i].dead) enemies.splice(i, 1);
+  STATE.gold += CONFIG.waveClearBonus;
+  sfx.wave();
+  if (STATE.waveIndex >= WAVES.length - 1) return; // Queen handled by choice
+  showBanner(`DỌN SẠCH WAVE ${STATE.waveIndex + 1} — +${CONFIG.waveClearBonus} VÀNG!`);
+  openShop();
+}
+function onQueenDefeated() {
+  STATE.queenDefeated = true;
+  STATE.turnState = 'idle';
+  hideAllHl();
+  setTimeout(() => {
+    if (STATE.phase !== 'playing') return;
+    STATE.phase = 'queenChoice';
+    showScreen('queen');
+  }, 900);
+}
+function chooseQueen(capture) {
+  showScreen(null);
+  STATE.phase = 'win';
+  const t = $('win-title'), x = $('win-text');
+  if (capture) {
+    t.textContent = 'CHECKMATE — KẾT THẬT';
+    x.textContent = 'Bạn bắt sống Hậu. Vua đã mất Hậu, vương quốc mới của bạn có cả vua lẫn hậu — cuộc phản loạn thành công trọn vẹn.';
+  } else {
+    t.textContent = 'CHECKMATE — KẾT BÁO THÙ';
+    x.textContent = 'Bạn kết liễu Hậu. Vua đã ngã, nhưng ngai vàng trống vắng — bạn thắng trận, nhưng mất đi người lẽ ra sẽ cùng bạn trị vì.';
+  }
+  showScreen('win');
+}
+
+// ---------------------------------------------------------------------------
+// Shop — opens between waves. Gold from kills + wave-clear bonus.
+// ---------------------------------------------------------------------------
+function openShop() {
+  STATE.phase = 'shop';
+  STATE.turnState = 'idle';
+  hideAllHl();
+  shopGoldEl.textContent = STATE.gold;
+  renderShopItems();
+  showScreen('shop');
+  updateHUD();
+}
+function renderShopItems() {
+  shopItemsEl.innerHTML = '';
+  const owned = { knife: player.damageBonus > 0, gun: player.hasGun };
+  for (const [id, item] of Object.entries(CONFIG.shop)) {
+    const div = document.createElement('div');
+    div.className = 'shop-item';
+    const isOwned = item.once && owned[id];
+    const afford = STATE.gold >= item.cost;
+    div.innerHTML = `<b>${item.name}</b> — ${item.cost} vàng<br><span>${item.desc}</span>`;
+    const btn = document.createElement('button');
+    btn.className = 'btn small';
+    btn.textContent = isOwned ? 'ĐÃ MUA' : afford ? 'MUA' : 'KHÔNG ĐỦ VÀNG';
+    btn.disabled = isOwned || !afford;
+    btn.addEventListener('click', () => buyShopItem(id));
+    div.appendChild(btn);
+    shopItemsEl.appendChild(div);
+  }
+}
+function buyShopItem(id) {
+  const item = CONFIG.shop[id];
+  if (!item || STATE.gold < item.cost) return;
+  if (item.once && ((id === 'knife' && player.damageBonus > 0) || (id === 'gun' && player.hasGun))) return;
+  STATE.gold -= item.cost;
+  if (id === 'armor') { player.maxHp += 1; player.hp = player.maxHp; }
+  else if (id === 'revive') { player.revives += 1; }
+  else if (id === 'knife') { player.damageBonus += 1; }
+  else if (id === 'gun') { player.hasGun = true; }
+  sfx.gold();
+  showToast(`Đã mua ${item.name}!`);
+  shopGoldEl.textContent = STATE.gold;
+  renderShopItems();
+  updateHUD();
+}
+$('btn-next-wave').addEventListener('click', () => {
+  showScreen(null);
+  STATE.phase = 'playing';
+  startWave(STATE.waveIndex + 1);
+});
 
 // ---------------------------------------------------------------------------
 // HUD
 // ---------------------------------------------------------------------------
-function fmtTime(s) {
-  const m = Math.floor(s / 60), ss = Math.floor(s % 60);
-  return `${String(m).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+function renderCards() {
+  cardsEl.innerHTML = '';
+  const names = { pawn: 'Tốt', knight: 'Mã', bishop: 'Tượng', rook: 'Xe', queen: 'Hậu' };
+  for (const [type, n] of Object.entries(player.hand)) {
+    if (n <= 0) continue;
+    const b = document.createElement('button');
+    b.className = 'card-btn';
+    b.textContent = `🃏 ${names[type]} ×${n}`;
+    b.title = type === 'pawn' ? 'Dùng: +1 hành động trong lượt này'
+      : `Dùng: lượt này di chuyển như ${names[type]} (dùng xong thẻ biến mất)`;
+    b.addEventListener('click', () => useCard(type));
+    cardsEl.appendChild(b);
+  }
+  if (cardsEl.innerHTML === '') cardsEl.innerHTML = '<span class="note">Chưa có thẻ — giết địch để nhận thẻ bài của chúng.</span>';
 }
 function updateHUD() {
-  timerEl.textContent = fmtTime(STATE.time);
-  hpFill.style.width = `${(player.hp / CONFIG.playerMaxHp) * 100}%`;
-  stFill.style.width = `${(player.stamina / CONFIG.staminaMax) * 100}%`;
-  soulsEl.textContent = STATE.souls;
-  healsEl.textContent = player.heals;
-  soulSlotEl.textContent = STATE.soulDash
-    ? `Soul-dash (F): ${STATE.soulDash.type.toUpperCase()}`
-    : 'Soul-dash (F): —';
-  const q = enemies.find((e) => e.type === 'queen' && !e.dead);
-  if (q) bossFill.style.width = `${Math.max(0, (q.hp / q.maxHp) * 100)}%`;
+  hpEl.textContent = `Máu: ${Math.max(0, player.hp)}/${player.maxHp}` +
+    (player.revives > 0 ? `  •  Hồi sinh: ${player.revives}` : '') +
+    (player.heals > 0 ? `  •  Hồi máu (H): ${player.heals}` : '');
+  actionsEl.textContent = `Hành động còn lại: ${'●'.repeat(Math.max(0, player.actions))}${'○'.repeat(Math.max(0, CONFIG.actionsPerTurn - player.actions))} (${player.actions}/${CONFIG.actionsPerTurn})`;
+  goldEl.textContent = `Vàng: ${STATE.gold}`;
+  warningsEl.textContent = STATE.warningsLeft > 0
+    ? `Cảnh báo còn lại: ${STATE.warningsLeft}/${CONFIG.warningsPerWave}`
+    : 'Hết cảnh báo!';
+  const q = STATE.turnQueue.slice(0, 6).map((t) =>
+    t.kind === 'player' ? 'Tốt' : PIECE_NAME[t.enemy.type]).join(' → ');
+  queueEl.textContent = STATE.turnState === 'player'
+    ? `Lượt của BẠN  •  Tiếp theo: ${q || '—'}`
+    : (STATE.currentEnemy ? `Lượt: ${PIECE_NAME[STATE.currentEnemy.type]} đang hành động…  •  Tiếp theo: ${q || '—'}` : `Lượt: ${q || '—'}`);
+  const qn = enemies.find((e) => e.type === 'queen' && !e.dead);
+  if (qn) {
+    bossLabel.textContent = `THE QUEEN — ${qn.hp}/20 (demo; video: 900)`;
+    bossFill.style.width = `${(qn.hp / qn.maxHp) * 100}%`;
+  }
+  renderCards();
 }
 
 // ---------------------------------------------------------------------------
-// Screens wiring
+// Screens wiring + pause
 // ---------------------------------------------------------------------------
-function startGame() {
-  fullRestart();
-}
 function pauseGame() {
   if (STATE.phase !== 'playing') return;
   STATE.phase = 'paused';
   showScreen('pause');
-  document.exitPointerLock?.();
 }
 function resumeGame() {
-  showScreen(null);
+  if (STATE.phase !== 'paused') return;
   STATE.phase = 'playing';
-  lockPointer();
+  showScreen(null);
+  refreshHighlights();
 }
-function openQueenChoice() {
-  STATE.phase = 'queenChoice';
-  showScreen('queen');
-  document.exitPointerLock?.();
-}
-function endGame(captured) {
-  STATE.phase = 'win';
-  $('win-title').textContent = 'CHECKMATE';
-  $('win-text').textContent = captured
-    ? 'KẾT THẬT — Bạn bắt sống Hậu. Vua mất đi người bảo vệ cuối cùng, và vương quốc mới của quân tốt bắt đầu từ chính bàn cờ này. (Chương 3 hoàn thành: cướp Hậu, không giết Hậu.)'
-    : 'KẾT BÁO THÙ — Bạn kết liễu Hậu. Vua sẽ phải trả giá, nhưng vương quốc mới sẽ không bao giờ có Hậu. Chiến thắng, nhưng đắng.';
-  showScreen('win');
-}
-$('btn-start').addEventListener('click', startGame);
+$('btn-start').addEventListener('click', () => {
+  showScreen(null);
+  hud.classList.remove('hidden');
+  fullRestart();
+});
 $('btn-resume').addEventListener('click', resumeGame);
-$('btn-restart-pause').addEventListener('click', fullRestart);
-$('btn-capture').addEventListener('click', () => endGame(true));
-$('btn-execute').addEventListener('click', () => endGame(false));
-$('btn-again-win').addEventListener('click', fullRestart);
-$('btn-retry').addEventListener('click', retryWave);
-$('btn-again-lose').addEventListener('click', fullRestart);
-// NOTE (QA 2026-11-06): Esc is handled in the main keydown listener in
-// the input section (pause when playing-unlocked, resume when paused).
-// Do NOT add a second Escape listener here — two listeners on the same
-// event used to pause and then instantly resume in one keypress.
-renderTutorial();
+$('btn-restart-pause').addEventListener('click', () => { fullRestart(); });
+$('btn-capture').addEventListener('click', () => chooseQueen(true));
+$('btn-execute').addEventListener('click', () => chooseQueen(false));
+$('btn-again-win').addEventListener('click', () => { fullRestart(); });
+$('btn-again-lose').addEventListener('click', () => { fullRestart(); });
+$('btn-retry').addEventListener('click', () => { retryWave(); });
+for (const form of ['knight', 'bishop', 'rook', 'queen']) {
+  $(`btn-promote-${form}`).addEventListener('click', () => choosePromotionForm(form));
+}
 
 // ---------------------------------------------------------------------------
-// Main loop
+// Main loop — the board is turn-based, so the loop only animates: floats,
+// fragments, the promotion tile pulse, and the enemy-intent timers.
 // ---------------------------------------------------------------------------
 const clock = new THREE.Clock();
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05);
-
-  if (STATE.phase === 'playing') {
-    STATE.time += dt;
-
-    // --- timers ---
-    player.attackCd = Math.max(0, player.attackCd - dt);
-    player.parryTimer = Math.max(0, player.parryTimer - dt);
-    player.iframeTimer = Math.max(0, player.iframeTimer - dt);
-    player.vulnerableTimer = Math.max(0, player.vulnerableTimer - dt);
-    coneHintTimer = Math.max(0, coneHintTimer - dt);
-    coneHintMat.opacity = coneHintTimer > 0 ? 0.35 : 0;
-    damageBuffFlash = Math.max(0, damageBuffFlash - dt);
-
-    // --- movement (dodge roll overrides normal movement) ---
-    if (player.rollTimer > 0) {
-      player.rollTimer -= dt;
-      player.pos.addScaledVector(player.rollDir, CONFIG.dodgeSpeed * dt);
-      player.group.rotation.x = Math.sin((1 - player.rollTimer / CONFIG.dodgeDuration) * Math.PI) * 0.9;
-    } else {
-      player.group.rotation.x = 0;
-      const mv = moveInputVector();
-      const sprinting = keys['ShiftLeft'] || keys['ShiftRight'];
-      const speed = sprinting && player.stamina > 0 ? CONFIG.playerSprintSpeed : CONFIG.playerSpeed;
-      if (mv.lengthSq() > 0) {
-        player.pos.addScaledVector(mv, speed * dt);
-        player.yaw = Math.atan2(mv.x, mv.z);
-        tutorialMark('move');
-        if (sprinting) player.stamina = Math.max(0, player.stamina - CONFIG.staminaSprintDrain * dt);
-      }
-      // Face the camera direction when idle/attacking (so slashes go where
-      // the player is looking); face movement direction while moving.
-      if (mv.lengthSq() > 0) {
-        player.group.rotation.y = player.yaw;
-      } else {
-        const f = playerForward();
-        player.group.rotation.y = Math.atan2(f.x, f.z);
-      }
-    }
-    clampToBoard(player.pos);
-    player.pos.y = 0;
-    player.group.position.copy(player.pos);
-
-    // --- stamina: regen when not sprinting/blocking; empty = vulnerable ---
-    const draining = (keys['ShiftLeft'] || keys['ShiftRight']) || player.blockHeld;
-    if (!draining && player.rollTimer <= 0) {
-      player.stamina = Math.min(CONFIG.staminaMax, player.stamina + CONFIG.staminaRegen * dt);
-    }
-    if (player.blockHeld) player.stamina = Math.max(0, player.stamina - CONFIG.staminaBlockDrain * dt);
-    if (player.stamina <= 0 && player.vulnerableTimer <= 0) {
-      player.vulnerableTimer = CONFIG.staminaEmptyPenalty;
-      showToast('Kiệt sức! Không thể hành động…');
-    }
-    // Sword swing animation easing back.
-    sword.rotation.z += (-0.5 - sword.rotation.z) * Math.min(1, dt * 12);
-    // Shield raises while blocking.
-    shield.position.x = player.blockHeld ? -0.35 : -0.55;
-    shield.position.z = player.blockHeld ? 0.45 : 0.15;
-
-    // --- enemies, projectiles, telegraphs ---
-    for (const e of [...enemies]) updateEnemy(e, dt);
-    for (let i = enemies.length - 1; i >= 0; i--) if (enemies[i].dead) enemies.splice(i, 1);
-    for (let i = projectiles.length - 1; i >= 0; i--) {
-      const p = projectiles[i];
-      p.life -= dt;
-      p.mesh.position.addScaledVector(p.dir, p.speed * dt);
-      // QA 2026-11-06: the old check used 3D distanceTo with a 0.9 radius,
-      // but projectiles fly at y ≈ 1.1 while player.pos is at y = 0, so
-      // the 3D distance could never drop below 1.1 — Bishop projectiles
-      // could NEVER hit the player. Use horizontal (XZ) distance instead.
-      const dxz = Math.hypot(p.mesh.position.x - player.pos.x, p.mesh.position.z - player.pos.z);
-      const hitR = p.isEnemy ? dxz < 0.9 : 0;
-      if (p.isEnemy && hitR) {
-        damagePlayer(p.dmg, p.mesh.position);
-        scene.remove(p.mesh); projectiles.splice(i, 1); continue;
-      }
-      if (p.life <= 0 || Math.abs(p.mesh.position.x) > 12 || Math.abs(p.mesh.position.z) > 12) {
-        scene.remove(p.mesh); projectiles.splice(i, 1);
-      }
-    }
-    updateTelegraphs(dt);
-    // Dropped Souls recovery.
-    if (droppedSouls && player.pos.distanceTo(droppedSouls.pos) < CONFIG.soulDropRecoverRadius) {
-      STATE.souls += droppedSouls.amount;
-      showToast(`Nhặt lại ${droppedSouls.amount} Souls!`);
-      sfx.pickup();
-      scene.remove(droppedSouls.mesh);
-      droppedSouls = null;
-    }
-    if (droppedSouls?.mesh) droppedSouls.mesh.position.y = 0.6 + Math.sin(STATE.time * 3) * 0.15;
-    checkWaveClear();
-    checkPromotion();
-    updateHUD();
-  } else {
-    // Idle motion on menus: slow camera drift + pieces idle (cheap, alive).
-    updateTelegraphs(dt);
-  }
-
-  updateFragments(dt);
+  updateTurnEngine(dt);
   updateFloaters(dt);
-  // Promotion tile pulse.
-  if (promoActive) promoTile.material.opacity = 0.55 + 0.3 * Math.sin(STATE.time * 4 || performance.now() / 250);
-
-  // --- third-person camera: behind the pawn, orbit with the mouse ---
-  const camDist = CONFIG.cameraDistance;
-  const cx = player.pos.x + Math.sin(camYaw) * Math.cos(camPitch) * camDist;
-  const cz = player.pos.z + Math.cos(camYaw) * Math.cos(camPitch) * camDist;
-  const cy = player.pos.y + CONFIG.cameraHeight * 0.6 + Math.sin(camPitch) * camDist;
-  camera.position.set(cx, cy, cz);
-  camera.lookAt(player.pos.x, player.pos.y + 1.2, player.pos.z);
-  // Cone hint follows the pawn and rotates with the camera facing.
-  coneHint.position.copy(player.pos);
-  coneHint.rotation.y = camYaw; // local -Z maps to the camera forward
-
+  updateFragments(dt);
+  if (STATE.promo) {
+    const p = STATE.promo;
+    const tile = p.unlocked ? hlPromoUnlocked : hlPromo;
+    tile.material.opacity = (p.unlocked ? 0.7 : 0.5) + 0.25 * Math.sin(performance.now() / 250);
+    if (!tile.visible) placeHl(tile, p.r, p.c);
+  }
   renderer.render(scene, camera);
 }
 animate();
